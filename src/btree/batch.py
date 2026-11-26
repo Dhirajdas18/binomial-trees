@@ -139,3 +139,44 @@ def bs_greeks(S, K, T, r, q, sigma, kind="call"):
         delta = -np.exp(-q * T) * ndtr(-d1)
         theta = common - q * S * np.exp(-q * T) * ndtr(-d1) + r * K * np.exp(-r * T) * ndtr(-d2)
     return delta, gamma, theta
+
+
+def american(S, K, T, r, q, sigma, n, kind="put", method="lr"):
+    """American prices for many options at once: backward induction with exercise at every node,
+    vectorised across options (one row per option, one column per node)."""
+    S, K, T, sigma = (np.asarray(x, dtype=float) for x in (S, K, T, sigma))
+    n, u, d, p = _params(S, K, T, r, q, sigma, n, method)
+    disc = np.exp(-r * T / n)[:, None]
+    j = np.arange(n + 1)
+    st = S[:, None] * u[:, None] ** j * d[:, None] ** (n - j)
+    sign = 1.0 if kind == "call" else -1.0
+    v = np.maximum(sign * (st - K[:, None]), 0)
+    pc = p[:, None]
+    for i in range(n - 1, -1, -1):
+        j = np.arange(i + 1)
+        st = S[:, None] * u[:, None] ** j * d[:, None] ** (i - j)
+        v = disc * (pc * v[:, 1:] + (1 - pc) * v[:, :-1])
+        v = np.maximum(v, sign * (st - K[:, None]))
+    return v[:, 0]
+
+
+def exercise_boundary(S, K, T, r, q, sigma, n=1000, kind="put"):
+    """For one CRR tree of n steps: per step, the highest stock price where an American put is
+    exercised (lowest for a call), NaN where no node is. Returns (time from today, boundary)."""
+    dt = T / n
+    u = np.exp(sigma * np.sqrt(dt))
+    d = 1 / u
+    p = (np.exp((r - q) * dt) - d) / (u - d)
+    disc = np.exp(-r * dt)
+    sign = 1.0 if kind == "call" else -1.0
+    v = np.maximum(sign * (S * u ** np.arange(n + 1) * d ** (n - np.arange(n + 1)) - K), 0)
+    edge = np.full(n + 1, np.nan)
+    for i in range(n - 1, -1, -1):
+        st = S * u ** np.arange(i + 1) * d ** (i - np.arange(i + 1))
+        hold = disc * (p * v[1:] + (1 - p) * v[:-1])
+        ex = sign * (st - K)
+        go = (ex > hold + 1e-12 * K) & (ex > 0)
+        v = np.where(go, ex, hold)
+        if go.any():
+            edge[i] = st[go].max() if kind == "put" else st[go].min()
+    return np.arange(n + 1) * dt, edge

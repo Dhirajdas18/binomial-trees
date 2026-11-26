@@ -16,7 +16,7 @@ to Black-Scholes as the steps grow; all computed in the browser.
 
 - [x] One step to many: replication, risk-neutral probability, CRR and its convergence to Black-Scholes
 - [x] Greeks from the tree
-- [ ] American options: the early-exercise premium and boundary
+- [x] American options: the early-exercise premium and boundary
 - [ ] Discrete cash dividends on NSE stocks
 - [ ] Trinomial trees and barrier options
 - [ ] An implied tree fitted to the NIFTY smile
@@ -75,20 +75,42 @@ recomputed with NIFTY moved ±0.5% and one day later.
 - **Re-pricing Leisen-Reimer worked.** Recomputing its price with NIFTY moved and a day later gave
   0.024 delta points, 0.09% of gamma and 0.85% of theta.
 
+### 3. If NIFTY's puts were American, most would be worth a little more; its calls nothing
+
+<a href="docs/img/american.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/american.png"><img src="docs/img/american.gif" alt="Early-exercise boundary of a one-year put against days left for three volatilities, and the early-exercise premium of an at-the-money put against the interest rate for 30, 91 and 365 days" width="720"></picture></a>
+
+NSE's options are European, so this is a what-if: an American option may be exercised on any day,
+and a tree handles that by taking, at every node, the larger of holding on and exercising now.
+Finding 1's NIFTY options are priced both ways on 201-step Leisen-Reimer trees, on NIFTY's close
+with the day's volatility at each strike, a 6.5% rate and a 1.3% dividend yield (the median implied
+by each expiry's forward against the close; the per-expiry figures are noisy because the close and
+option prices are taken at different moments). The premium is American minus European.
+
+- **83% of the puts would be worth over a tick more.** The median premium was ₹0.67, 1.2% of the
+  European price; 1.7% for strikes 0–5% below NIFTY and 4.1% for those above it, 0.6% more than 10%
+  below. It grew with time to expiry: 0.5% at 7–15 days, 3.9% at 91–365.
+- **The calls would be worth nothing more.** Every call in the set is out of the money and NIFTY's
+  dividend yield is below the rate, so exercising early never beat holding.
+- **Exercise only after a deep fall.** With a year left, a put on NIFTY is worth exercising once the
+  index is below 90.8% of the strike at 12% volatility, 83.8% at 18% and 75.6% at 25%; with 30 days
+  left, 95.2%, 91.7% and 88.2%.
+- **The rate drives the premium.** An at-the-money 91-day put at 15% volatility gains nothing with a
+  zero rate, 5.1% at 6.5% and 14.8% at 12%; a one-year put 15.5% at 6.5%.
+
 ## Quick start
 
 ```bash
 uv sync
 uv run btree report <topic>             # a study's numbers and charts -> out/
-                                        # (topics: convergence, greeks)
+                                        # (topics: convergence, greeks, american)
 uv run python scripts/build_site.py     # tree lab -> site/index.html (code only, no data)
 uv run pytest
 ```
 
 The lab and the tests need no market data; the tests of the browser maths need Node. Studies on
 real NIFTY options read implied-vol-surface's local data (its daily SVI table and NSE option rows;
-set `BTREE_IV_DIR` if that repo is not at `~/quant-learn/implied-vol-surface`); nothing from NSE is
-committed here.
+set `BTREE_IV_DIR` if that repo is not at `~/quant-learn/implied-vol-surface`) and NIFTY's close from
+the NSE bhavcopy archive (`BTREE_LAKE_DIR` or `IV_LAKE_DIR`); nothing from NSE is committed here.
 
 ## Design
 
@@ -104,7 +126,7 @@ committed here.
 - `src/btree/batch.py`: European tree prices for many options at once as the discounted binomial
   average of payoffs (equal to backward induction, tested), for CRR and Leisen-Reimer; Greeks from
   the first two steps (with an optional move back to today's price) or by re-pricing, and the
-  Black-Scholes Greeks.
+  Black-Scholes Greeks; American prices for many options at once and the early-exercise boundary.
 - `src/btree/data.py`: month-end NIFTY option cases from implied-vol-surface's local data.
 - `src/btree/reports.py`: README findings, reproducible with `btree report <topic>`.
 - `src/btree/site.py`: the tree lab, one static Plotly page built from code alone.
