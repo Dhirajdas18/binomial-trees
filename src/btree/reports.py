@@ -510,10 +510,144 @@ def report_barriers(out_dir: Path) -> dict:
     return res
 
 
+def report_smile_tree(out_dir: Path) -> dict:
+    """A tree fitted to the NIFTY smile: at each month-end, local volatility from the day's SVI
+    slices (Dupire, in total-variance form) on a 1,260-step trinomial grid, 30 days ahead. Checks:
+    it re-prices four of the day's out-of-the-money options; a digital call at 102% of the forward
+    against its exact price from the smile, a flat at-the-money volatility and the strike's own
+    volatility; then a down-and-out call (strike at the forward, barrier 5% below, checked on 21
+    daily closes) against the same tree with a flat at-the-money volatility. Local variance is
+    capped at 9 times the at-the-money variance (wings only) to keep the grid fine. Needs
+    BTREE_IV_DIR."""
+    import math
+
+    import pandas as pd
+    from scipy.special import ndtr
+
+    from btree import batch, localvol
+    from btree.data import R
+
+    res = {}
+    T, N = 30 / 365, 1260
+    per = N // 21
+    rows = []
+    for d, srf, F in localvol.month_end_surfaces():
+        atm = float(srf.implied_vol(0.0, T))
+        cap = (3 * atm) ** 2
+
+        def lv(x, t, srf=srf, cap=cap):
+            return srf.local_var(x, t, cap=cap)
+
+        def flat(x, t, atm=atm):
+            return np.full_like(x, atm * atm)
+
+        rep = []
+        for k in (-0.08, -0.04, 0.0, 0.03):
+            K = F * math.exp(k)
+            kind = "put" if k < 0 else "call"
+            sign = -1.0 if kind == "put" else 1.0
+            mkt = batch.bs_european([F], [K], [T], R, R, [float(srf.implied_vol(k, T))], kind)[0]
+            got = localvol.tree_price(F, T, R, N, lambda S, K=K, s=sign: np.maximum(s * (S - K), 0),
+                                      lv)
+            rep.append(got - mkt)
+        k = math.log(1.02)
+        w, w1, _, _ = srf.w(k, T)
+        sw = math.sqrt(w)
+        d2 = -k / sw - sw / 2
+        truth = 100 * math.exp(-R * T) * (ndtr(d2) - math.exp(-d2 * d2 / 2)
+                                          / math.sqrt(2 * math.pi) * w1 / (2 * sw))
+        dig_lv = localvol.tree_price(F, T, R, N, localvol.smoothed_digital(1.02 * F), lv)
+        flat_d = 100 * math.exp(-R * T) * ndtr(-k / (atm * math.sqrt(T)) - atm * math.sqrt(T) / 2)
+        vk = float(srf.implied_vol(k, T))
+        strike_d = 100 * math.exp(-R * T) * ndtr(-k / (vk * math.sqrt(T)) - vk * math.sqrt(T) / 2)
+
+        def fr(t):
+            return math.exp(-(R - NIFTY_YIELD) * (T - t))
+
+        def alive(S, t, H=0.95 * F):
+            return S > H
+
+        def call(S, F=F):
+            return np.maximum(S - F, 0)
+
+        lv_ratio = math.sqrt(float(lv(np.array([-0.05]), T / 2)[0])
+                             / float(lv(np.array([0.0]), T / 2)[0]))
+        rows.append({
+            "date": d, "atm": atm, "F": F, "rep": float(np.mean(np.abs(rep))), "lv_ratio": lv_ratio,
+            "truth": truth, "dig_lv": dig_lv, "dig_flat": flat_d, "dig_strike": strike_d,
+            "dao_lv": localvol.tree_price(F, T, R, 21 * per, call, lv, fr, alive, per),
+            "dao_flat": localvol.tree_price(F, T, R, 21 * per, call, flat, fr, alive, per),
+            "van_lv": localvol.tree_price(F, T, R, 21 * per, call, lv),
+            "van_flat": localvol.tree_price(F, T, R, 21 * per, call, flat),
+        })
+    d = pd.DataFrame(rows).set_index("date")
+    res["month-ends"] = (
+        f"{len(d)} ({d.index.min():%b %Y}-{d.index.max():%b %Y}); 30-day at-the-money volatility "
+        f"{d['atm'].min():.1%}-{d['atm'].max():.1%}"
+    )
+    res["re-pricing the day's options (k = -8%, -4%, 0, +3%)"] = (
+        f"mean error per month-end median Rs {d['rep'].median():.2f} "
+        f"({1e4 * (d['rep'] / d['F']).median():.2f} basis points of the forward), 90th percentile "
+        f"Rs {d['rep'].quantile(0.9):.2f}; above Rs 2 in {(d['rep'] > 2).sum()} month-ends"
+    )
+    e = {c: d[c] - d["truth"] for c in ("dig_lv", "dig_flat", "dig_strike")}
+    res["digital call at 102% of the forward, pays Rs 100 (exact price from the smile)"] = (
+        f"exact median Rs {d['truth'].median():.2f}; error median: smile tree "
+        f"Rs {e['dig_lv'].median():+.3f} (largest {e['dig_lv'].abs().max():.2f}), flat "
+        f"at-the-money vol Rs {e['dig_flat'].median():+.2f}, the strike's own vol "
+        f"Rs {e['dig_strike'].median():+.2f}"
+    )
+    dd = 100 * (d["dao_flat"] / d["dao_lv"] - 1)
+    vd = 100 * (d["van_flat"] / d["van_lv"] - 1)
+    res["down-and-out call, barrier 5% below, daily checks: flat vol against the smile tree"] = (
+        f"flat higher by a median {dd.median():.2f}% (10th-90th percentile {dd.quantile(0.1):.2f}% "
+        f"to {dd.quantile(0.9):.2f}%; higher in {(dd > 0).mean():.0%} of month-ends); the plain "
+        f"call on the same two trees differs by a median {vd.median():.2f}%"
+    )
+
+    res["  local volatility 5% below the forward / at the forward (15 days ahead)"] = (
+        f"median {d['lv_ratio'].median():.2f}, above 1 in {(d['lv_ratio'] > 1).mean():.0%} of "
+        f"month-ends"
+    )
+
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.3))
+    ax = axes[0]
+    rng = np.random.default_rng(0)
+    groups = (("dig_lv", "smile-fitted\ntree", plots.COLORS["Leisen-Reimer"]),
+              ("dig_flat", "Black, at-the-\nmoney vol", plots.MUTED),
+              ("dig_strike", "Black, the\nstrike's own vol", plots.SERIES[1]))
+    for row, (c, _, col) in enumerate(groups):
+        ax.scatter(e[c], row + rng.uniform(-0.18, 0.18, len(e[c])), s=12, color=col, alpha=0.6,
+                   lw=0)
+        ax.plot([e[c].median()] * 2, [row - 0.3, row + 0.3], color=plots.TEXT, lw=2)
+    ax.set_yticks(range(len(groups)), [g[1] for g in groups])
+    ax.axvline(0, color=plots.TEXT_2, lw=0.8)
+    ax.invert_yaxis()
+    ax.grid(axis="y", visible=False)
+    ax.set_xlabel("price minus the exact price, Rs (each dot a month-end; bar = median)")
+    ax.set_title("Digital call 2% above the forward, 30 days, pays Rs 100", fontsize=10.5)
+    ax = axes[1]
+    ax.plot(d.index, dd, color=plots.SERIES[1], lw=1.6)
+    ax.plot(d.index, vd, color=plots.MUTED, lw=1.4)
+    plots.label_line_end(ax, d.index[-1], float(dd.iloc[-1]), "knock-out call", plots.SERIES[1])
+    plots.label_line_end(ax, d.index[-1], float(vd.iloc[-1]) - 0.3, "plain call", plots.MUTED)
+    ax.axhline(0, color=plots.TEXT_2, lw=0.8)
+    ax.set_ylabel("flat-vol price against the\nsmile-fitted tree's, %")
+    ax.set_title("Down-and-out call, barrier 5% below, daily checks", fontsize=10.5)
+    fig.suptitle("A tree fitted to the smile prices a digital exactly; a flat volatility "
+                 "overprices a knock-out call", x=0.01, ha="left", fontsize=12,
+                 fontweight="semibold")
+    fig.tight_layout()
+    plots.save(fig, out_dir, "smile_tree")
+    plt.close(fig)
+    return res
+
+
 REPORTS: dict[str, Callable[[Path], dict]] = {
     "convergence": report_convergence,
     "greeks": report_greeks,
     "american": report_american,
     "dividends": report_dividends,
     "barriers": report_barriers,
+    "smile-tree": report_smile_tree,
 }

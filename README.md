@@ -19,7 +19,7 @@ to Black-Scholes as the steps grow; all computed in the browser.
 - [x] American options: the early-exercise premium and boundary
 - [x] Discrete cash dividends on NSE stocks
 - [x] Trinomial trees and barrier options
-- [ ] An implied tree fitted to the NIFTY smile
+- [x] An implied tree fitted to the NIFTY smile
 - [ ] Does a smile-fitted tree hedge better than Black-Scholes
 
 ## Findings
@@ -146,13 +146,41 @@ and Kou's shift of the barrier (×e^{−0.5826σ√Δt}).
   at 62% volatility (10% below: up to 5.0%). The shifted barrier cut the median gap to 0.04%; at the
   highest volatilities it overshot, by up to 5.8%.
 
+### 6. A tree fitted to NIFTY's smile priced a digital exactly; a flat volatility overpriced a knock-out call
+
+<a href="docs/img/smile_tree.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/smile_tree.png"><img src="docs/img/smile_tree.gif" alt="Digital call price errors for the smile-fitted tree and Black with two volatilities, one dot per month-end; and the flat-volatility price of a knock-out call and a plain call against the smile-fitted tree over time" width="720"></picture></a>
+
+Derman and Kani's implied tree bends a tree so it re-prices every option on the smile; built
+directly it often needs negative probabilities. The stable form used here: at each of 143
+month-ends, the day's SVI slices give Dupire's local volatility (the volatility the price must have
+at each level and date to produce the smile; total variance interpolated in time between slices),
+run on a 1,260-step trinomial grid 30 days ahead. Local variance is capped at nine times the
+at-the-money variance, which only binds in the far wings and keeps the grid fine; a first version
+without the cap missed at-the-money prices by about 10%. A digital call (pays ₹100 if NIFTY ends
+above 102% of the forward) has an exact price from the smile's slope; the down-and-out call
+(strike at the forward, barrier 5% below, checked on 21 daily closes) has none, so the smile tree is
+compared with the same tree at a flat at-the-money volatility.
+
+- **The tree re-priced the smile.** Across four of each day's out-of-the-money options its error
+  had a median of ₹0.31 (0.19 basis points of the forward), 90th percentile ₹0.97; above ₹2 in 4
+  of 143 month-ends.
+- **It priced the digital exactly; Black did not.** Against an exact median of ₹31.05, the smile
+  tree's error had a median of −₹0.006. Black's formula was ₹0.97 too low with the at-the-money
+  volatility and ₹1.79 too low with the strike's own volatility, which leaves out the smile's
+  slope.
+- **A flat volatility overpriced the knock-out call.** The flat-vol tree priced it a median 0.59%
+  above the smile tree (10th–90th percentile 0.31% to 1.67%, above in 98% of month-ends), while the
+  plain call differed by 0.11%. In the smile tree NIFTY is more volatile as it falls: local
+  volatility 5% below the forward was a median 1.55 times that at the forward (above it in 98% of
+  month-ends), so the price reaches the barrier more often.
+
 ## Quick start
 
 ```bash
 uv sync
 uv run btree report <topic>             # a study's numbers and charts -> out/
                                         # (topics: convergence, greeks, american, dividends,
-                                        #  barriers)
+                                        #  barriers, smile-tree)
 uv run python scripts/build_site.py     # tree lab -> site/index.html (code only, no data)
 uv run pytest
 ```
@@ -183,6 +211,9 @@ the NSE bhavcopy archive (`BTREE_LAKE_DIR` or `IV_LAKE_DIR`); nothing from NSE i
 - `src/btree/barrier.py`: down-and-out calls: the continuous-barrier formula, the binomial tree,
   Ritchken's trinomial tree with a node row on the barrier and an optional checking interval, and
   the Broadie-Glasserman-Kou barrier shift.
+- `src/btree/localvol.py`: the SVI surface interpolated in time, Dupire's local variance in
+  total-variance form, a forward-units trinomial grid with node-by-node probabilities, a barrier
+  check and a cell-averaged digital payoff.
 - `src/btree/data.py`: month-end NIFTY option cases from implied-vol-surface's local data.
 - `src/btree/reports.py`: README findings, reproducible with `btree report <topic>`.
 - `src/btree/site.py`: the tree lab, one static Plotly page built from code alone.
