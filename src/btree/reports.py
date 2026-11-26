@@ -340,8 +340,89 @@ def report_american(out_dir: Path) -> dict:
     return res
 
 
+def report_dividends(out_dir: Path) -> dict:
+    """Cash dividends on NSE stocks: for every dividend Yahoo records for today's F&O stocks
+    (2014-2026), a call struck 30 days before the ex-date and expiring 10 days after it, at the
+    money and 10% in the money, on the day's close with the previous 60 days' volatility and a
+    6.5% rate: American against European on an escrowed-dividend tree (201-step Leisen-Reimer),
+    and the American price with the dividend spread as a continuous yield instead. Needs
+    BTREE_IV_DIR (for today's F&O list); Yahoo data is fetched once and cached under data/."""
+    import pandas as pd
+
+    from btree.data import R, iv_dir
+    from btree.dividends import american_escrowed, events, fetch, yield_shortcut
+
+    res = {}
+    so = pd.read_parquet(iv_dir() / "data" / "options" / "stock_options.parquet",
+                         columns=["date", "symbol"])
+    syms = sorted(so.loc[so["date"] == so["date"].max(), "symbol"].unique())
+    data = fetch(syms)
+    ev = events(data)
+    res["dividends"] = (
+        f"{len(ev):,} on {ev['symbol'].nunique()} of {len(syms)} current F&O stocks "
+        f"({ev['ex_date'].min():%b %Y}-{ev['ex_date'].max():%b %Y}); size as % of the price: "
+        f"median {ev['div_yield'].median():.2%}, 90th percentile "
+        f"{ev['div_yield'].quantile(0.9):.2%}, "
+        f"largest {ev['div_yield'].max():.1%}; volatility median {ev['vol'].median():.1%}"
+    )
+    rows = []
+    for r in ev.itertuples():
+        for m in (0.9, 1.0):
+            K = r.S * m
+            am, eu = american_escrowed(r.S, K, r.T, R, r.vol, r.divs, 201, "call")
+            ya, ye = yield_shortcut(r.S, K, r.T, R, r.vol, r.divs, 201, "call")
+            rows.append({"dy": r.div_yield, "m": m, "am": am, "eu": eu, "ya": ya, "ye": ye})
+    d = pd.DataFrame(rows)
+    d["prem"] = d["am"] - d["eu"]
+    d["err"] = d["am"] - d["ya"]
+    bins = [0, 0.005, 0.01, 0.02, 0.05, 1]
+    labels = ["under 0.5%", "0.5-1%", "1-2%", "2-5%", "over 5%"]
+    tab = {}
+    for m, g in d.groupby("m"):
+        name = "at the money" if m == 1.0 else "10% in the money"
+        res[f"call {name}"] = (
+            f"early exercise worth over a tick for {(g['prem'] > TICK).mean():.0%}; premium median "
+            f"{(g['prem'] / g['eu']).median():.2%} of the European price; the yield shortcut "
+            f"undervalues the American price by over a tick for {(g['err'] > TICK).mean():.0%}, "
+            f"median {(g['err'] / g['am']).median():.2%} (90th percentile "
+            f"{(g['err'] / g['am']).quantile(0.9):.1%}); European prices differ by at most "
+            f"Rs {(g['eu'] - g['ye']).abs().max():.6f}"
+        )
+        gb = g.groupby(pd.cut(g["dy"], bins, labels=labels), observed=True)
+        tab[m] = gb.apply(lambda x: pd.Series({
+            "n": len(x), "prem": 100 * (x["prem"] / x["eu"]).median(),
+            "err": 100 * (x["err"] / x["am"]).median()}), include_groups=False)
+        res[f"  {name}, by dividend size: premium / shortcut error (median % )"] = "; ".join(
+            f"{k} ({int(r_['n'])}): {r_['prem']:.1f}% / {r_['err']:.1f}%"
+            for k, r_ in tab[m].iterrows())
+
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.3), sharey=False)
+    xs = np.arange(len(labels))
+    for ax, key, title in ((axes[0], "prem", "extra value of exercising early"),
+                           (axes[1], "err", "how much the yield shortcut undervalues it")):
+        for j, (m, col, lab) in enumerate(((1.0, plots.COLORS["CRR"], "at the money"),
+                                           (0.9, plots.SERIES[1], "10% in the money"))):
+            vals = tab[m][key].reindex(labels).to_numpy()
+            ax.bar(xs + (j - 0.5) * 0.38, vals, 0.38, color=col, label=lab)
+            for x, y in zip(xs + (j - 0.5) * 0.38, vals, strict=True):
+                ax.text(x, y + 1, f"{y:.0f}%", ha="center", va="bottom", fontsize=8,
+                        color=plots.TEXT)
+        ax.set_xticks(xs, labels)
+        ax.set_xlabel("dividend as % of the share price")
+        ax.set_title(title, fontsize=10.5)
+    axes[0].set_ylabel("median, % of the call's price")
+    axes[0].legend(fontsize=9, loc="upper left")
+    fig.suptitle("Big dividends make exercising a stock call early worth a lot, and a smooth "
+                 "yield misses it", x=0.01, ha="left", fontsize=12, fontweight="semibold")
+    fig.tight_layout()
+    plots.save(fig, out_dir, "dividends")
+    plt.close(fig)
+    return res
+
+
 REPORTS: dict[str, Callable[[Path], dict]] = {
     "convergence": report_convergence,
     "greeks": report_greeks,
     "american": report_american,
+    "dividends": report_dividends,
 }

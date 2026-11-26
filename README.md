@@ -17,7 +17,7 @@ to Black-Scholes as the steps grow; all computed in the browser.
 - [x] One step to many: replication, risk-neutral probability, CRR and its convergence to Black-Scholes
 - [x] Greeks from the tree
 - [x] American options: the early-exercise premium and boundary
-- [ ] Discrete cash dividends on NSE stocks
+- [x] Discrete cash dividends on NSE stocks
 - [ ] Trinomial trees and barrier options
 - [ ] An implied tree fitted to the NIFTY smile
 - [ ] Does a smile-fitted tree hedge better than Black-Scholes
@@ -97,12 +97,36 @@ option prices are taken at different moments). The premium is American minus Eur
 - **The rate drives the premium.** An at-the-money 91-day put at 15% volatility gains nothing with a
   zero rate, 5.1% at 6.5% and 14.8% at 12%; a one-year put 15.5% at 6.5%.
 
+### 4. Before a big dividend, exercising a stock call early is worth a lot, and a smooth yield misses it
+
+<a href="docs/img/dividends.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/dividends.png"><img src="docs/img/dividends.gif" alt="Median early-exercise premium and the yield shortcut's undervaluation, as a percentage of the call price, by dividend size, for at-the-money and 10 percent in-the-money calls" width="720"></picture></a>
+
+NSE stocks pay cash dividends on known dates, and the share price drops by about the dividend on
+the ex-date. An American call holder can exercise the day before to collect it. For every dividend
+Yahoo records for today's F&O stocks (3,191 dividends on 202 of 218 stocks, April 2014–November
+2026; median 0.61% of the price), a call is struck 30 days before the ex-date and expires 10 days
+after it, at the money and 10% in the money, on that day's close with the previous 60 days'
+volatility (median 30.2%) and a 6.5% rate. Prices come from an escrowed-dividend tree (the
+dividend's present value is taken out of the price that moves, and added back at each node; 201-step
+Leisen-Reimer), as American and European; the shortcut spreads the same dividend as a continuous
+yield. Today's F&O list only, so stocks that left it are missing. NSE's stock options are European:
+this is a what-if.
+
+- **Most calls would be worth exercising early.** For 86% of the 10%-in-the-money calls the right
+  was worth over a tick, a median 2.6% of the European price (2.1% at the money).
+- **It grew with the dividend.** For 10%-in-the-money calls the premium was 0.4% for dividends under
+  0.5% of the price, 8.3% at 1–2%, 21.7% at 2–5% and 71.1% above 5%; at the money, 104% above 5%.
+- **The yield shortcut got the American price wrong, not the European.** Spread as a yield, the
+  dividend left European prices unchanged (to ₹0.000001) but undervalued the American call by a
+  median 2.4% (10% in the money; 1.9% at the money), 7.1% and 15.2% for dividends of 2–5%, and
+  34.7% at the money above 5%.
+
 ## Quick start
 
 ```bash
 uv sync
 uv run btree report <topic>             # a study's numbers and charts -> out/
-                                        # (topics: convergence, greeks, american)
+                                        # (topics: convergence, greeks, american, dividends)
 uv run python scripts/build_site.py     # tree lab -> site/index.html (code only, no data)
 uv run pytest
 ```
@@ -127,6 +151,9 @@ the NSE bhavcopy archive (`BTREE_LAKE_DIR` or `IV_LAKE_DIR`); nothing from NSE i
   average of payoffs (equal to backward induction, tested), for CRR and Leisen-Reimer; Greeks from
   the first two steps (with an optional move back to today's price) or by re-pricing, and the
   Black-Scholes Greeks; American prices for many options at once and the early-exercise boundary.
+- `src/btree/dividends.py`: Yahoo's close and cash dividends for NSE stocks (no threads, retried,
+  cached under `data/`), the escrowed-dividend tree with exercise at every node, the continuous-yield
+  shortcut, and the dividend events.
 - `src/btree/data.py`: month-end NIFTY option cases from implied-vol-surface's local data.
 - `src/btree/reports.py`: README findings, reproducible with `btree report <topic>`.
 - `src/btree/site.py`: the tree lab, one static Plotly page built from code alone.
