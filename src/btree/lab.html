@@ -1,0 +1,168 @@
+<form class="calc" id="tl" onsubmit="return false" novalidate>
+  <label>Share price today (₹) <input id="tl-S" name="S" type="number" inputmode="decimal" min="1" step="any" value="25000" required></label>
+  <label>Strike (₹) <input id="tl-K" name="K" type="number" inputmode="decimal" min="1" step="any" value="25000" required></label>
+  <label>Volatility (% a year) <input id="tl-v" name="v" type="number" inputmode="decimal" min="0.1" max="300" step="any" value="15" required></label>
+  <label>Days to expiry <input id="tl-d" name="d" type="number" inputmode="numeric" min="1" max="3650" step="1" value="30" required></label>
+  <label>Interest rate (% a year) <input id="tl-r" name="r" type="number" inputmode="decimal" min="-5" max="50" step="any" value="6.5" required></label>
+  <label>Dividends (% a year) <input id="tl-q" name="q" type="number" inputmode="decimal" min="0" max="50" step="any" value="1.2" required></label>
+  <label>Steps in the drawn tree <input id="tl-n" name="n" type="number" inputmode="numeric" min="1" max="12" step="1" value="6" required aria-describedby="tl-n-help"></label>
+  <label>Option <select id="tl-k" name="kind"><option value="call">Call (right to buy)</option><option value="put">Put (right to sell)</option></select></label>
+  <label>Exercise <select id="tl-x" name="style" aria-describedby="tl-x-help"><option value="eu">European</option><option value="am">American</option></select></label>
+</form>
+<p class="note" id="tl-x-help">European options can be exercised only at expiry, American ones on any day before it.</p>
+<p class="note" id="tl-n-help">The drawn tree takes 1 to 12 steps; the convergence chart below runs every step count from 1 to 200.</p>
+<p class="note" id="tl-note" aria-live="polite"></p>
+<dl class="stat-grid" id="tl-stats"></dl>
+<h3>The tree</h3>
+<p class="note">How to read it: time runs left to right, from today to expiry, one column per step. Each dot is a share price the tree allows at that step; from every dot the price can move one step up or one step down. Labels show the share price on top and what the option is worth there underneath. At expiry the option is worth what it pays out; every earlier value is the two values after it, weighted and discounted back one step. Orange dots (American only) are where cashing in the option right away is worth more than holding on. Hover over a dot for details.</p>
+<div id="tl-tree" class="sim-chart tree" role="img" aria-label="The binomial tree: possible share prices at each step from today to expiry, joined by up and down moves, with the option value at each point and early-exercise points highlighted"></div>
+<h3>More steps, closer to Black-Scholes</h3>
+<p class="note">How to read it: left to right is the number of steps in the tree; height is the option price it gives. The plain tree (blue) zigzags around the Black-Scholes price (grey dashed line) and closes in slowly. Averaging two neighbouring step counts (green) removes most of the zigzag. The Leisen-Reimer tree (purple, odd step counts only) lines its steps up with the strike and is close from a few dozen steps. The view starts at 5 steps; zoom out with the chart’s controls for fewer.</p>
+<div id="tl-conv" class="sim-chart tall" role="img" aria-label="Tree option price against the number of steps from 1 to 200 for the plain tree, the averaged tree and the Leisen-Reimer tree, against the Black-Scholes price"></div>
+<script>
+$js
+(() => {
+  const el = (id) => document.getElementById(id);
+  const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+  const ids = { S: "tl-S", K: "tl-K", v: "tl-v", d: "tl-d", r: "tl-r", q: "tl-q", n: "tl-n", kind: "tl-k", style: "tl-x" };
+  const num = (x, dp = 2) => Number.isFinite(x) ? x.toLocaleString("en-IN", { minimumFractionDigits: dp, maximumFractionDigits: dp }).replace("-", "−") : "–";
+  const rs = (x, dp = 2) => (x < 0 ? "−₹" : "₹") + num(Math.abs(x), dp);
+
+  // Inputs from the URL hash (unknown or bad values fall back to the defaults).
+  const h = new URLSearchParams(location.hash.slice(1));
+  for (const [k, id] of Object.entries(ids)) {
+    const v = h.get(k);
+    if (v === null) continue;
+    if (k === "kind" ? ["call", "put"].includes(v) : k === "style" ? ["eu", "am"].includes(v) : Number.isFinite(parseFloat(v))) el(id).value = v;
+  }
+
+  const read = () => {
+    const o = {};
+    for (const [k, id] of Object.entries(ids)) o[k] = (k === "kind" || k === "style") ? el(id).value : parseFloat(el(id).value);
+    return o;
+  };
+  const problem = (o) => {
+    if (!(o.S > 0) || !(o.K > 0)) return "Enter a share price and a strike above zero.";
+    if (!(o.v > 0)) return "Enter a volatility above zero.";
+    if (!(o.d >= 1)) return "Enter at least 1 day to expiry.";
+    if (!Number.isFinite(o.r) || !Number.isFinite(o.q)) return "Enter an interest rate and a dividend yield (0 is fine).";
+    if (!(Number.isInteger(o.n) && o.n >= 1 && o.n <= 12)) return "The drawn tree takes a whole number of steps from 1 to 12.";
+    return "";
+  };
+
+  const cfg = { displaylogo: false, responsive: true };
+  const base = () => ({ paper_bgcolor: css("--surface"), plot_bgcolor: css("--surface"),
+    font: { family: getComputedStyle(document.body).fontFamily, color: css("--text-2"), size: 12 },
+    margin: { l: 64, r: 16, t: 32, b: 56 }, legend: { orientation: "h", y: 1.02, yanchor: "bottom", x: 0 },
+    hovermode: "closest" });
+  const axis = (title, extra = {}) => Object.assign({ title, gridcolor: css("--grid"), zerolinecolor: css("--grid") }, extra);
+  const legendFor = (id) => el(id).clientWidth < 600  // phones: legend under the chart
+    ? { orientation: "h", x: 0, y: -0.2, yanchor: "top", font: { size: 11 } } : { orientation: "h", y: 1.02, yanchor: "bottom", x: 0 };
+  const stats = (rows) => { el("tl-stats").innerHTML = rows.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join(""); };
+
+  const update = () => {
+    const o = read();
+    history.replaceState(null, "", "#" + Object.keys(ids).map((k) => `${k}=${encodeURIComponent(el(ids[k]).value)}`).join("&"));
+    const bad = problem(o);
+    let g;
+    const T = o.d / 365, r = o.r / 100, q = o.q / 100, sig = o.v / 100, am = o.style === "am";
+    const args = [o.S, o.K, T, r, q, sig];
+    if (!bad) { try { g = crrTree(...args, o.n, o.kind, am); } catch (e) { g = e.message; } }
+    if (bad || typeof g === "string") {
+      el("tl-note").textContent = bad || `With these inputs the tree breaks down: ${g}.`;
+      stats([]);
+      Plotly.purge("tl-tree"); Plotly.purge("tl-conv");
+      return;
+    }
+    const t2 = css("--text-2"), ca = css("--accent"), cx = css("--accent-2"), mu = css("--muted"), surf = css("--surface");
+    const name = `${am ? "American" : "European"} ${o.kind}`;
+    const bs = bsPrice(...args, o.kind);
+    const safe = (f) => { try { return f(); } catch (e) { return null; } };
+
+    // Convergence: plain CRR for 1..201 steps (201 feeds the n = 200 average), averaged, LR odd.
+    const NMAX = 200;
+    const crr = Array.from({ length: NMAX + 1 }, (_, i) => safe(() => crrPrice(...args, i + 1, o.kind, am)));
+    const ns = crr.slice(0, NMAX).map((_, i) => i + 1);
+    const avg = ns.map((n) => crr[n - 1] === null || crr[n] === null ? null : (crr[n - 1] + crr[n]) / 2);
+    const odd = ns.filter((n) => n % 2);
+    const lr = odd.map((n) => safe(() => leisenReimer(...args, n, o.kind, am)));
+    // Premium = American minus European tree price at 200 steps, whichever style is chosen.
+    const other = safe(() => crrPrice(...args, NMAX, o.kind, !am));
+    const prem = crr[NMAX - 1] === null || other === null ? NaN : (am ? 1 : -1) * (crr[NMAX - 1] - other);
+    const gk = safe(() => crrGreeks(...args, NMAX, o.kind, am)) || {};
+    const price = g.value[0][0];
+    const exN = g.exercise.reduce((s, row) => s + row.filter(Boolean).length, 0);
+
+    stats([
+      [`Tree price, ${o.n} step${o.n > 1 ? "s" : ""}`, rs(price)],
+      [am ? "Black-Scholes (European)" : "Black-Scholes", rs(bs)],
+      ["Difference", rs(price - bs)],
+      ["Early-exercise premium <small>(200 steps)</small>", rs(prem)],
+      ["Delta <small>(₹ per ₹1 share move)</small>", num(gk.delta, 3)],
+      ["Gamma <small>(delta change per ₹100)</small>", num(100 * gk.gamma, 4)],
+      ["Theta <small>(₹ a day)</small>", rs(gk.theta / 365)],
+    ]);
+    el("tl-note").textContent = `${name}, strike ₹${num(o.K, 0)}, ${o.d} days, ${o.n}-step tree: each step is ` +
+      `${num(o.d / o.n, 1)} days; the share moves up ×${g.u.toFixed(4)} or down ×${g.d.toFixed(4)}, ` +
+      `with a ${num(100 * g.p, 1)}% chance of up in the tree’s pricing world. Tree price ${rs(price)} against ` +
+      `Black-Scholes ${rs(bs)}.` + (am ? (exN ? ` Exercising early pays at ${exN} point${exN > 1 ? "s" : ""} of the tree.` : " Exercising early never pays in this tree.") : "");
+
+    // The tree: x = step, y = share price. Edges as one line trace, nodes split by exercise.
+    const ex = [], ey = [];
+    for (let i = 0; i < o.n; i++) for (let j = 0; j <= i; j++) {
+      ex.push(i, i + 1, null, i, i + 1, null);
+      ey.push(g.stock[i][j], g.stock[i + 1][j + 1], null, g.stock[i][j], g.stock[i + 1][j], null);
+    }
+    const nodes = (flag) => {
+      const pts = { x: [], y: [], text: [], custom: [] };
+      g.stock.forEach((row, i) => row.forEach((s, j) => {
+        if (g.exercise[i][j] !== flag) return;
+        pts.x.push(i); pts.y.push(s);
+        pts.text.push(`${num(s, 0)}<br>${num(g.value[i][j], 1)}`);
+        pts.custom.push([num(i * o.d / o.n, 1), rs(s, 0), rs(g.value[i][j]), j, i - j,
+          flag ? "<br>exercise now: intrinsic value beats the discounted risk-neutral continuation value" : (i === o.n ? "<br>at expiry: the payoff" : "<br>discounted risk-neutral expected value of the next two nodes")]);
+      }));
+      return pts;
+    };
+    const plain = nodes(false), early = nodes(true);
+    const showText = o.n <= 6, narrow = el("tl-tree").clientWidth < 600;
+    const mk = (pts, color, label) => ({ x: pts.x, y: pts.y, customdata: pts.custom, mode: showText ? "markers+text" : "markers",
+      text: pts.text, textposition: "top center", textfont: { size: narrow ? 9 : 11, color: t2 }, cliponaxis: false,
+      marker: { color, size: o.n <= 6 ? 11 : 8, line: { color: surf, width: 1.5 } }, name: label,
+      hovertemplate: "step %{x} (day %{customdata[0]})<br>share price %{customdata[1]} (%{customdata[3]} up, %{customdata[4]} down moves)<br>option value %{customdata[2]}%{customdata[5]}<extra></extra>" });
+    const traces = [{ x: ex, y: ey, mode: "lines", line: { color: mu, width: 1 }, hoverinfo: "skip", name: "possible moves, up or down" },
+      { x: [-0.4, o.n + 0.4], y: [o.K, o.K], mode: "lines", line: { color: t2, width: 1, dash: "dot" }, hoverinfo: "skip", name: `strike, ₹${num(o.K, 0)}` },
+      mk(plain, ca, showText ? "share price (top) and option value (below)" : "a possible share price")];
+    if (am) traces.push(mk(early, cx, "exercise early here: worth more than holding"));
+    const ys = g.stock.flat(), lo = Math.min(...ys), hi = Math.max(...ys), pad = 0.08 * (hi - lo);
+    Plotly.react("tl-tree", traces, Object.assign(base(), {
+      legend: legendFor("tl-tree"), margin: { l: 72, r: 24, t: narrow ? 24 : 56, b: narrow ? 120 : 56 },
+      xaxis: axis(`step (each step = ${num(o.d / o.n, 1)} days)`, { tickmode: "linear", dtick: 1, range: [-0.4, o.n + 0.4], zeroline: false }),
+      yaxis: axis("share price, ₹", { range: [lo - pad, hi + pad * (showText ? 2 : 1)], tickformat: ",.0f" }) }), cfg);
+
+    // Convergence chart: y fitted to n >= 5 so the first few wild steps don't flatten the rest.
+    const view = [...crr.slice(4, NMAX), ...avg.slice(4), ...lr.slice(2), bs].filter((v) => v !== null);
+    const yl = Math.min(...view), yh = Math.max(...view), yp = 0.08 * (yh - yl || 1);
+    const ht = (lab) => `${lab}<br>%{x} steps: ₹%{y:,.2f}<extra></extra>`;
+    Plotly.react("tl-conv", [
+      { x: ns, y: crr.slice(0, NMAX), mode: "lines", line: { color: ca, width: 1.5 }, name: "plain tree (CRR)", hovertemplate: ht("Cox-Ross-Rubinstein") },
+      { x: ns, y: avg, mode: "lines", line: { color: css("--green"), width: 2 }, name: "average of n and n + 1 steps", hovertemplate: ht("CRR averaged over n and n + 1") },
+      { x: odd, y: lr, mode: "lines", line: { color: css("--violet"), width: 2 }, name: "Leisen-Reimer (odd steps)", hovertemplate: ht("Leisen-Reimer, Peizer-Pratt method 2") },
+      { x: [o.n], y: [crr[o.n - 1]], mode: "markers", marker: { color: ca, size: 10, line: { color: surf, width: 1.5 } }, name: "the drawn tree", hovertemplate: ht("the drawn tree") },
+    ], Object.assign(base(), { legend: legendFor("tl-conv"), margin: { l: 72, r: 16, t: el("tl-conv").clientWidth < 600 ? 24 : 56, b: el("tl-conv").clientWidth < 600 ? 110 : 56 },
+      shapes: [{ type: "line", xref: "paper", x0: 0, x1: 1, y0: bs, y1: bs, line: { color: t2, width: 1.5, dash: "dash" } }],
+      annotations: [{ xref: "paper", x: 1, y: bs, text: am ? `Black-Scholes, European (reference): ${rs(bs)}` : `Black-Scholes: ${rs(bs)}`,
+        showarrow: false, xanchor: "right", yanchor: "bottom", font: { size: 11, color: t2 } }],
+      xaxis: axis("steps in the tree", { range: [4, NMAX + 1] }),
+      yaxis: axis(`${name} price, ₹`, { range: [yl - yp, yh + yp], tickformat: ",.2f" }) }), cfg);
+  };
+
+  let queued = false;
+  const later = () => { if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; update(); }); } };
+  el("tl").addEventListener("input", later);
+  el("tl").addEventListener("change", later);
+  addEventListener("resize", later);  // legends move under the charts on narrow screens
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", update);
+  update();
+})();
+</script>
