@@ -1,7 +1,7 @@
 [project]
 name = "binomial-trees"
 version = "0.1.0"
-description = "Binomial and trinomial option-pricing trees: CRR and its convergence to Black-Scholes, tree Greeks, American early exercise, dividends, barriers and an implied tree fitted to the NIFTY smile, with a live tree lab."
+description = "Binomial and trinomial option-pricing trees: CRR and its convergence to Black-Scholes, tree Greeks, American early exercise, cash dividends, barriers, a tree fitted to the NIFTY smile and a daily hedging test, with a live tree lab."
 readme = "README.md"
 license = "MIT"
 authors = [{ name = "Dhirajdas18" }]

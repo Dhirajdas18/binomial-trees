@@ -95,8 +95,9 @@ def tree_price(F_T, T, r, n, payoff, local_var, forward_ratio=None, alive=None,
 
 
 def smoothed_digital(K, amount=100.0):
-    """Cash-or-nothing call payoff averaged over each node's grid cell (in log price), so a
-    strike between two nodes doesn't make the price jump with the grid."""
+    """Cash-or-nothing call payoff averaged over each node's grid cell (cell edges at the
+    log-price midpoints between nodes, the covered share measured in price), so a strike between
+    two nodes doesn't make the price jump with the grid."""
     def pay(S):
         lo = np.sqrt(S * np.r_[S[0] ** 2 / S[1], S[:-1]])
         hi = np.sqrt(S * np.r_[S[1:], S[-1] ** 2 / S[-2]])

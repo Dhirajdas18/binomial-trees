@@ -3,7 +3,7 @@
 [![CI](https://github.com/Dhirajdas18/binomial-trees/actions/workflows/ci.yml/badge.svg)](https://github.com/Dhirajdas18/binomial-trees/actions/workflows/ci.yml)
 [![Tree lab](https://github.com/Dhirajdas18/binomial-trees/actions/workflows/pages.yml/badge.svg)](https://dhirajdas18.github.io/binomial-trees/)
 
-Binomial (and later trinomial) option-pricing trees, from a single up-or-down step to trees fitted
+Binomial and trinomial option-pricing trees, from a single up-or-down step to trees fitted
 to the NIFTY smile: Cox-Ross-Rubinstein and its convergence to Black-Scholes, Greeks from the tree,
 American early exercise, NSE dividends and barriers.
 
@@ -50,8 +50,9 @@ is the exact answer. Accuracy is counted against NSE's price step, one tick of �
   between odd and even steps (−1.07 at 100 steps for a 30-day call worth ₹427), and the average
   cut it to −0.004. For a 10% out-of-the-money put it barely helped (−0.18 to −0.15): there the
   error follows where the strike falls between nodes. Across the real options at 100 steps the
-  average halved the median error within 2% of the forward (₹0.37 to ₹0.19) and did nothing
-  beyond 10% (₹0.10 to ₹0.11); it needed 1,000 steps for 96.4% within a tick.
+  average halved the median error within 2% of the forward (₹0.37 to ₹0.19), did not help at
+  10–20% (₹0.10 to ₹0.11) and was slightly worse beyond 20% (₹0.15 to ₹0.17); it needed 1,000
+  steps for 96.4% within a tick.
 
 ### 2. Greeks read off a basic tree were accurate; Leisen-Reimer's own nodes gave a wrong theta
 
@@ -65,7 +66,7 @@ its theta moved back to today's price (a second-order Taylor step), and the Leis
 recomputed with NIFTY moved ±0.5% and one day later.
 
 - **The basic tree's own Greeks were accurate.** At 100 steps the median errors were 0.028 delta
-  points, 0.41% of gamma and 0.41% of theta (₹0.011 a day); at 500 steps 0.005 points, 0.08% and
+  points (delta × 100, so per 100 units of NIFTY), 0.41% of gamma and 0.41% of theta (₹0.011 a day); at 500 steps 0.005 points, 0.08% and
   0.08%.
 - **Leisen-Reimer's nodes gave a theta off by 142%.** Its middle two-step node is not at today's
   price (its up and down moves don't cancel), so comparing the two prices mixes a price move into
@@ -82,18 +83,20 @@ recomputed with NIFTY moved ±0.5% and one day later.
 NSE's options are European, so this is a what-if: an American option may be exercised on any day,
 and a tree handles that by taking, at every node, the larger of holding on and exercising now.
 Finding 1's NIFTY options are priced both ways on 201-step Leisen-Reimer trees, on NIFTY's close
-with the day's volatility at each strike, a 6.5% rate and a 1.3% dividend yield (the median implied
-by each expiry's forward against the close; the per-expiry figures are noisy because the close and
-option prices are taken at different moments). The premium is American minus European.
+with the day's volatility at each strike, a 6.5% rate and a 1.3% dividend yield for every year (the
+2015–2026 median implied by each expiry's forward against the close; the per-expiry figures are
+noisy because the close and option prices are taken at different moments). The premium is American minus European.
 
 - **83% of the puts would be worth over a tick more.** The median premium was ₹0.67, 1.2% of the
   European price; 1.7% for strikes 0–5% below NIFTY and 4.1% for those above it, 0.6% more than 10%
   below. It grew with time to expiry: 0.5% at 7–15 days, 3.9% at 91–365.
-- **The calls would be worth nothing more.** Every call in the set is out of the money and NIFTY's
-  dividend yield is below the rate, so exercising early never beat holding.
-- **Exercise only after a deep fall.** With a year left, a put on NIFTY is worth exercising once the
-  index is below 90.8% of the strike at 12% volatility, 83.8% at 18% and 75.6% at 25%; with 30 days
-  left, 95.2%, 91.7% and 88.2%.
+- **The calls would be worth nothing more.** Every call in the set is out of the money, far from
+  where an American call would be exercised (with a 1.3% yield that takes a deep in-the-money call:
+  a one-year call struck at 16% of NIFTY's level would carry a ₹71 premium, one struck at 40%
+  nothing).
+- **Exercise only after a deep fall.** With about a year left, a put on NIFTY is worth exercising
+  once the index is below 90.7% of the strike at 12% volatility, 83.6% at 18% and 75.5% at 25%; with
+  30 days left, 95.1%, 91.8% and 88.0% (boundary smoothed over 41 steps).
 - **The rate drives the premium.** An at-the-money 91-day put at 15% volatility gains nothing with a
   zero rate, 5.1% at 6.5% and 14.8% at 12%; a one-year put 15.5% at 6.5%.
 
@@ -109,8 +112,9 @@ after it, at the money and 10% in the money, on that day's close with the previo
 volatility (median 30.2%) and a 6.5% rate. Prices come from an escrowed-dividend tree (the
 dividend's present value is taken out of the price that moves, and added back at each node; 201-step
 Leisen-Reimer), as American and European; the shortcut spreads the same dividend as a continuous
-yield. Today's F&O list only, so stocks that left it are missing. NSE's stock options are European:
-this is a what-if.
+yield. The dividend's amount and date are treated as known 30 days ahead, which is often before
+the company announces them. Today's F&O list only, so stocks that left it are missing. NSE's stock
+options are European: this is a what-if.
 
 - **Most calls would be worth exercising early.** For 86% of the 10%-in-the-money calls the right
   was worth over a tick, a median 2.6% of the European price (2.1% at the money).
@@ -131,7 +135,7 @@ barrier 5% below, 91 days, 15% volatility, 6.5% rate, 1.3% yield, against the co
 formula. The binomial tree kills every node at or below the barrier; Ritchken's trinomial tree (up,
 middle or down at each step) stretches its spacing so a row of nodes sits exactly on the barrier.
 Then the same option over 30 days, checked only on 21 daily closes (a trinomial tree that checks the
-barrier every tenth of its 210 steps), at each of 143 month-ends' real 30-day at-the-money NIFTY
+barrier every hundredth of its 2,100 steps), at each of 143 month-ends' real 30-day at-the-money NIFTY
 volatility (8.4%–62.0%), against the continuous formula and the formula with Broadie, Glasserman
 and Kou's shift of the barrier (×e^{−0.5826σ√Δt}).
 
@@ -139,14 +143,14 @@ and Kou's shift of the barrier (×e^{−0.5826σ√Δt}).
   100 steps and +₹7.76 at 800, and swung between −₹0.06 and +₹15.65 from 400 to 800 steps: the
   barrier usually falls between node levels, and which level the tree treats as the barrier moves
   with the step count.
-- **The aligned trinomial converged.** Its error was +₹0.27 at 100 steps, +₹0.06 at 800, and within
-  a tick from 480 steps.
+- **The aligned trinomial converged.** Its error was +₹0.27 at 100 steps and +₹0.06 at 800; from 400
+  to 800 steps it stayed between −₹0.03 and +₹0.12, against −₹0.06 to +₹15.65 for the binomial tree.
 - **Checking once a day mattered when NIFTY was volatile.** With the barrier 5% below, the
-  continuous formula priced the daily-checked option a median 0.2% too low, but up to 16.8% too low
-  at 62% volatility (10% below: up to 5.0%). The shifted barrier cut the median gap to 0.04%; at the
-  highest volatilities it overshot, by up to 5.8%.
+  continuous formula priced the daily-checked option a median 0.2% too low, but up to 20.1% too low
+  at 62% volatility (10% below: up to 6.1%). The shifted barrier cut the median gap to 0.01% and the
+  largest to 1.6% (10% below: 0.5%).
 
-### 6. A tree fitted to NIFTY's smile priced a digital exactly; a flat volatility overpriced a knock-out call
+### 6. A tree fitted to NIFTY's smile priced a digital to within a paisa at the median; a flat volatility overpriced a knock-out call
 
 <a href="docs/img/smile_tree.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/smile_tree.png"><img src="docs/img/smile_tree.gif" alt="Digital call price errors for the smile-fitted tree and Black with two volatilities, one dot per month-end; and the flat-volatility price of a knock-out call and a plain call against the smile-fitted tree over time" width="720"></picture></a>
 
@@ -155,49 +159,55 @@ directly it often needs negative probabilities. The stable form used here: at ea
 month-ends, the day's SVI slices give Dupire's local volatility (the volatility the price must have
 at each level and date to produce the smile; total variance interpolated in time between slices),
 run on a 1,260-step trinomial grid 30 days ahead. Local variance is capped at nine times the
-at-the-money variance, which only binds in the far wings and keeps the grid fine; a first version
-without the cap missed at-the-money prices by about 10%. A digital call (pays ₹100 if NIFTY ends
+at-the-money variance, which only binds in the far wings and keeps the grid fine. A digital call (pays ₹100 if NIFTY ends
 above 102% of the forward) has an exact price from the smile's slope; the down-and-out call
 (strike at the forward, barrier 5% below, checked on 21 daily closes) has none, so the smile tree is
 compared with the same tree at a flat at-the-money volatility.
 
-- **The tree re-priced the smile.** Across four of each day's out-of-the-money options its error
+- **The tree re-priced the smile.** At four strikes on each day's 30-day smile (8% and 4% below,
+  at, and 3% above the forward) its error
   had a median of ₹0.31 (0.19 basis points of the forward), 90th percentile ₹0.97; above ₹2 in 4
   of 143 month-ends.
-- **It priced the digital exactly; Black did not.** Against an exact median of ₹31.05, the smile
-  tree's error had a median of −₹0.006. Black's formula was ₹0.97 too low with the at-the-money
+- **It priced the digital closely; Black did not.** Against an exact median of ₹31.05, the smile
+  tree's error had a median of −₹0.006 (largest ₹4.50). Black's formula was ₹0.97 too low with the at-the-money
   volatility and ₹1.79 too low with the strike's own volatility, which leaves out the smile's
   slope.
 - **A flat volatility overpriced the knock-out call.** The flat-vol tree priced it a median 0.59%
   above the smile tree (10th–90th percentile 0.31% to 1.67%, above in 98% of month-ends), while the
-  plain call differed by 0.11%. In the smile tree NIFTY is more volatile as it falls: local
-  volatility 5% below the forward was a median 1.55 times that at the forward (above it in 98% of
-  month-ends), so the price reaches the barrier more often.
+  plain call differed by 0.11%. In the smile tree NIFTY is more volatile as it falls (local
+  volatility 5% below the forward, 15 days ahead, was a median 1.55 times that at the forward), and
+  it touched the barrier on a daily close more often: 18.7% of the time against 16.9% at a flat
+  volatility (median; more often in 83% of month-ends).
 
-### 7. The smile tree's delta hedged no better than Black's; keeping the smile's shape left the least risk
+### 7. No delta hedged reliably better than Black's out of sample; the smile tree's did worst there
 
-<a href="docs/img/hedging.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/hedging.png"><img src="docs/img/hedging.gif" alt="Share of the option's daily price variance left after hedging with Black's delta, the smile tree's delta and the same-shape delta, for all days, each half and big-move days" width="720"></picture></a>
+<a href="docs/img/hedging.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/hedging.png"><img src="docs/img/hedging.gif" alt="Share of the option's daily price variance left after hedging with Black's delta, the smile tree's delta and two same-shape deltas, for all days, each half and big-move days" width="720"></picture></a>
 
 Every trading day from January 2015 to November 2026 (2,926 day pairs), options on the monthly
 expiry 20–60 days out are struck 5% below, at and 3% above the forward and hedged for one day with
 the expiry's futures; the hedging error is the option's price change minus delta times the
-forward's change, both days priced at their own SVI smile. Three deltas: Black's at the strike's own
+forward's change, both days priced at their own SVI smile. The deltas: Black's at the strike's own
 volatility (the smile stays with the strike); the smile tree's, from re-pricing finding 6's
 local-volatility tree with the forward moved ±0.5% (local volatility fixed to the price level); and
-the same-shape rule from implied-vol-surface's finding 4 (the smile keeps its shape against the
-forward and its level moves by 1 × the at-the-money slope × the move, the multiplier chosen there on
-2015–2020). Scored by the share of the option's daily price variance left after hedging.
+the same-shape rule of implied-vol-surface's finding 4 (tomorrow's volatility at a given
+strike-to-forward ratio is today's plus b × the at-the-money slope × the forward's move, so a fixed
+strike's volatility changes by b × that slope minus the smile's slope at the strike). b = 1 is that
+repo's choice from predicting smiles on 2015–2020; b = 2 is chosen here from a grid of 0–3 by the
+hedging errors of 2015–2020. 2021–2026 is out of sample for both. Scored by the share of the
+option's daily price variance left after hedging.
 
-- **The smile tree was not reliably better than Black.** It left 12.6% of the variance against
-  Black's 13.1% (daily mean squared error −3.9%, Newey-West t −0.4): better in 2015–2020 (11.6%
-  against 14.3%), worse in 2021–2026 (13.1% against 12.5%).
-- **Keeping the smile's shape left the least risk, but not decisively against Black.** The same-shape
-  delta left 11.3% overall and 11.4% in 2021–2026, after its multiplier was chosen on 2015–2020;
-  against Black that is −14.2% (t −1.6), −9.4% on 2021–2026 alone (t −1.2). Against the smile tree it
-  was clearly better: −10.7% (t −5.8), −13.1% on 2021–2026 (t −5.6).
-- **The smile tree overcorrected.** Its at-the-money delta averaged 0.455 against Black's 0.506; the
-  same-shape rule, 0.459. Below the forward the smile tree made puts most negative (−0.213 against
-  −0.156), and that strike was its worst: 21.6% of the variance left against Black's 18.8%.
+- **The smile tree was not reliably better than Black, and worse out of sample.** It left 12.6% of
+  the variance against Black's 13.1% overall (daily mean squared error −3.9%, Newey-West t −0.4):
+  11.6% against 14.3% in 2015–2020, 13.1% against 12.5% in 2021–2026.
+- **The same-shape rule with b = 1 was Black almost exactly.** At the money it gives Black's delta;
+  overall it left 12.9% (−1.4% against Black, t −2.3), 12.4% in 2021–2026 (−1.5%, t −1.6).
+- **With b chosen on 2015–2020 hedges it left the least, but not provably.** b = 2 left 11.0% in
+  2015–2020 (b = 1: 14.1%), then 11.4% out of sample against Black's 12.5%: −8.8%, t −1.0. Against
+  the smile tree it was clearly better out of sample: −12.5% (t −5.5).
+- **The deltas moved the same way, by different amounts.** At the money the smile tree's delta
+  averaged 0.455 and the b = 2 rule's 0.459, against Black's 0.506; 5% below the forward the smile
+  tree's put delta was −0.213 (b = 2: −0.167, Black −0.156), and that strike was its worst: 21.6% of
+  the variance left against Black's 18.8%.
 
 ## Quick start
 
@@ -240,7 +250,7 @@ the NSE bhavcopy archive (`BTREE_LAKE_DIR` or `IV_LAKE_DIR`); nothing from NSE i
   total-variance form, a forward-units trinomial grid with node-by-node probabilities, a barrier
   check and a cell-averaged digital payoff.
 - `src/btree/hedge.py`: one-day hedging errors of NIFTY options with Black's delta, the smile tree's
-  delta and the same-shape rule's delta.
+  delta and the same-shape rule's delta for any multiplier.
 - `src/btree/data.py`: month-end NIFTY option cases from implied-vol-surface's local data.
 - `src/btree/reports.py`: README findings, reproducible with `btree report <topic>`.
 - `src/btree/site.py`: the tree lab, one static Plotly page built from code alone.

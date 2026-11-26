@@ -287,6 +287,11 @@ def report_american(out_dir: Path) -> dict:
         f"{k}: median Rs {gg['prem'].median():.2f} ({(gg['prem'] / gg['eu']).median():.2%})"
         for k, gg in p.groupby(db, observed=True))
 
+    for frac in (0.16, 0.40):  # how deep a one-year call must be before early exercise pays
+        a = ([25000.0], [25000.0 * frac], [1.0], R, NIFTY_YIELD, [0.15])
+        prem = batch.american(*a, 201, "call", "lr")[0] - batch.lr_european(*a, 201, "call")[0]
+        res[f"one-year call struck at {frac:.0%} of NIFTY, 15% vol: early-exercise premium"] = (
+            f"Rs {max(prem, 0):.2f}")
     rates = np.linspace(0, 0.12, 25)
     curves = {}
     for days in (30, 91, 365):
@@ -313,9 +318,10 @@ def report_american(out_dir: Path) -> dict:
               .to_numpy())
         ax.plot(xs, ys, color=col, lw=2)
         plots.label_line_end(ax, xs[0], ys[0], f"volatility {vol:.0%}", col)
-        res[f"exercise boundary, 1-year put, {vol:.0%} vol"] = (
-            f"exercise once NIFTY is below {100 * e[ok][0] / 25000:.1f}% of the strike a year out, "
-            f"{100 * np.interp(30, left[ok][::-1], e[ok][::-1]) / 25000:.1f}% with 30 days left"
+        res[f"exercise boundary, 1-year put, {vol:.0%} vol (41-step smoothed)"] = (
+            f"exercise once NIFTY is below {ys[0]:.1f}% of the strike with about a year left "
+            f"(first exercisable step, {xs[0]:.0f} days left), "
+            f"{np.interp(30, xs[::-1], ys[::-1]):.1f}% with 30 days left"
         )
     ax.invert_xaxis()
     ax.set_xlim(380, -5)
@@ -391,7 +397,7 @@ def report_dividends(out_dir: Path) -> dict:
         gb = g.groupby(pd.cut(g["dy"], bins, labels=labels), observed=True)
         tab[m] = gb.apply(lambda x: pd.Series({
             "n": len(x), "prem": 100 * (x["prem"] / x["eu"]).median(),
-            "err": 100 * (x["err"] / x["am"]).median()}), include_groups=False)
+            "err": 100 * (x["err"] / x["am"]).median()}), include_groups=False).dropna()
         res[f"  {name}, by dividend size: premium / shortcut error (median % )"] = "; ".join(
             f"{k} ({int(r_['n'])}): {r_['prem']:.1f}% / {r_['err']:.1f}%"
             for k, r_ in tab[m].iterrows())
@@ -402,7 +408,7 @@ def report_dividends(out_dir: Path) -> dict:
                            (axes[1], "err", "how much the yield shortcut undervalues it")):
         for j, (m, col, lab) in enumerate(((1.0, plots.COLORS["CRR"], "at the money"),
                                            (0.9, plots.SERIES[1], "10% in the money"))):
-            vals = tab[m][key].reindex(labels).to_numpy()
+            vals = tab[m][key].reindex(labels).fillna(0).to_numpy()  # empty size band: no bar
             ax.bar(xs + (j - 0.5) * 0.38, vals, 0.38, color=col, label=lab)
             for x, y in zip(xs + (j - 0.5) * 0.38, vals, strict=True):
                 ax.text(x, y + 1, f"{y:.0f}%", ha="center", va="bottom", fontsize=8,
@@ -443,10 +449,15 @@ def report_barriers(out_dir: Path) -> dict:
         i = int(np.argmin(np.abs(ns - n)))
         res[f"  {ns[i]} steps"] = f"CRR error Rs {crr[i]:+.2f}, aligned trinomial Rs {tri[i]:+.3f}"
     big = ns >= 400
+    outside = np.flatnonzero(np.abs(tri) > TICK)
+    # first step count after which the error never leaves a tick again (None if it still does)
+    first = outside[-1] + 1 if len(outside) else 0
+    stay = first if first < len(ns) else None
     res["  from 400 to 800 steps"] = (
         f"CRR error ranged Rs {crr[big].min():+.2f} to {crr[big].max():+.2f}; aligned trinomial "
-        f"Rs {tri[big].min():+.3f} to {tri[big].max():+.3f}; trinomial within a tick from "
-        f"{ns[np.argmax(np.abs(tri) <= TICK)]} steps"
+        f"Rs {tri[big].min():+.3f} to {tri[big].max():+.3f}; " + (
+            f"trinomial stays within a tick from {ns[stay]} steps" if stay is not None
+            else "trinomial does not stay within a tick by 800 steps")
     )
 
     svi = pd.read_parquet(iv_dir() / "data" / "derived" / "svi_daily.parquet")
@@ -455,7 +466,7 @@ def report_barriers(out_dir: Path) -> dict:
     ends = pd.Series(dates, index=dates).groupby([dates.year, dates.month]).max()
     m = svi[svi["date"].isin(ends)].assign(gap=lambda x: (x["days"] - 30).abs())
     vols = m.sort_values("gap").groupby("date").head(1)["atm_vol"].to_numpy()
-    T30, checks, per = 30 / 365, 21, 10  # 21 trading-day closes in 30 calendar days
+    T30, checks, per = 30 / 365, 21, 100  # 21 closes in 30 days; 100 steps between checks
     rows = []
     for H_pct in (0.95, 0.90):
         for vol in vols:
@@ -572,8 +583,15 @@ def report_smile_tree(out_dir: Path) -> dict:
 
         lv_ratio = math.sqrt(float(lv(np.array([-0.05]), T / 2)[0])
                              / float(lv(np.array([0.0]), T / 2)[0]))
+        def one(S):
+            return np.ones_like(S)
+
+        # chance of surviving to expiry (never touching the barrier on a daily close), r = 0
+        surv_lv = localvol.tree_price(F, T, 0.0, 21 * per, one, lv, fr, alive, per)
+        surv_flat = localvol.tree_price(F, T, 0.0, 21 * per, one, flat, fr, alive, per)
         rows.append({
             "date": d, "atm": atm, "F": F, "rep": float(np.mean(np.abs(rep))), "lv_ratio": lv_ratio,
+            "ko_lv": 1 - surv_lv, "ko_flat": 1 - surv_flat,
             "truth": truth, "dig_lv": dig_lv, "dig_flat": flat_d, "dig_strike": strike_d,
             "dao_lv": localvol.tree_price(F, T, R, 21 * per, call, lv, fr, alive, per),
             "dao_flat": localvol.tree_price(F, T, R, 21 * per, call, flat, fr, alive, per),
@@ -585,7 +603,7 @@ def report_smile_tree(out_dir: Path) -> dict:
         f"{len(d)} ({d.index.min():%b %Y}-{d.index.max():%b %Y}); 30-day at-the-money volatility "
         f"{d['atm'].min():.1%}-{d['atm'].max():.1%}"
     )
-    res["re-pricing the day's options (k = -8%, -4%, 0, +3%)"] = (
+    res["re-pricing four strikes on the day's 30-day smile (k = -8%, -4%, 0, +3%)"] = (
         f"mean error per month-end median Rs {d['rep'].median():.2f} "
         f"({1e4 * (d['rep'] / d['F']).median():.2f} basis points of the forward), 90th percentile "
         f"Rs {d['rep'].quantile(0.9):.2f}; above Rs 2 in {(d['rep'] > 2).sum()} month-ends"
@@ -608,6 +626,10 @@ def report_smile_tree(out_dir: Path) -> dict:
     res["  local volatility 5% below the forward / at the forward (15 days ahead)"] = (
         f"median {d['lv_ratio'].median():.2f}, above 1 in {(d['lv_ratio'] > 1).mean():.0%} of "
         f"month-ends"
+    )
+    res["  chance of touching the barrier on a daily close: smile tree / flat vol"] = (
+        f"median {d['ko_lv'].median():.1%} / {d['ko_flat'].median():.1%}; smile tree higher in "
+        f"{(d['ko_lv'] > d['ko_flat']).mean():.0%} of month-ends"
     )
 
     fig, axes = plt.subplots(1, 2, figsize=(11, 4.3))
@@ -662,14 +684,26 @@ def report_hedging(out_dir: Path) -> dict:
     import pandas as pd
 
     from btree.data import R, iv_dir
-    from btree.hedge import B_SAME_SHAPE, day_cases
+    from btree.hedge import B_SAME_SHAPE, day_cases, same_shape_delta
 
     res = {}
     svi = pd.read_parquet(iv_dir() / "data" / "derived" / "svi_daily.parquet")
     d = day_cases(svi, R)
     d["big"] = (d["dF"] / d["F0"]).abs() > 0.01
+    # the same-shape multiplier chosen here on 2015-2020 hedging errors, scored on 2021-2026
+    grid = (0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0)
+    train = d["date"].dt.year <= 2020
+    mse = {b: float(((d["dC"] - same_shape_delta(d, b) * d["dF"])[train] ** 2).mean())
+           for b in grid}
+    b_fit = min(mse, key=mse.get)
+    d["same_shape_fit"] = d["dC"] - same_shape_delta(d, b_fit) * d["dF"]
+    res["same-shape multiplier chosen on 2015-2020 hedging errors"] = (
+        f"b = {b_fit:g} (grid {', '.join(f'{b:g}' for b in grid)}; 2015-2020 variance left "
+        + ", ".join(f"{b:g}: {100 * mse[b] / float((d['dC'][train] ** 2).mean()):.1f}%"
+                    for b in grid) + ")")
     meth = {"black": "Black delta", "smile_tree": "smile-tree delta",
-            "same_shape": f"same-shape delta ({B_SAME_SHAPE:g}x)"}
+            "same_shape": f"same-shape, b = {B_SAME_SHAPE:g} (implied-vol-surface's choice)",
+            "same_shape_fit": f"same-shape, b = {b_fit:g} (chosen on 2015-2020 hedges)"}
     res["cases"] = (
         f"{len(d):,} option-days on {d['date'].nunique():,} day pairs "
         f"({d['date'].min():%b %Y}-{d['date'].max():%b %Y}); strikes "
@@ -685,45 +719,43 @@ def report_hedging(out_dir: Path) -> dict:
         res[f"share of the option's daily variance left after hedging, {label} ({len(x):,})"] = (
             "; ".join(f"{meth[c]} {left[label][c]:.1f}%" for c in meth))
     daily = d.groupby("date")[list(meth)].apply(lambda g: (g**2).mean())
-    for c in ("smile_tree", "same_shape"):
+    for c in ("smile_tree", "same_shape", "same_shape_fit"):
         diff = daily[c] - daily["black"]
         res[f"  {meth[c]} against Black (daily mean squared error)"] = (
             f"{100 * diff.mean() / daily['black'].mean():+.1f}% (Newey-West t {_nw_t(diff):.1f}); "
             f"better on {(diff < 0).mean():.0%} of days"
         )
-    diff = daily["same_shape"] - daily["smile_tree"]
-    res["  same-shape against smile tree"] = (
-        f"{100 * diff.mean() / daily['smile_tree'].mean():+.1f}% (t {_nw_t(diff):.1f})")
     test = daily[daily.index.year >= 2021]
-    res["  2021-2026 only (the same-shape multiplier was chosen on 2015-2020)"] = "; ".join(
+    res["  2021-2026 only (out of sample for both multipliers)"] = "; ".join(
         f"{meth[a]} against {meth[b]}: {100 * (test[a] - test[b]).mean() / test[b].mean():+.1f}% "
         f"(t {_nw_t(test[a] - test[b]):.1f})"
-        for a, b in (("same_shape", "black"), ("smile_tree", "black"),
-                     ("same_shape", "smile_tree")))
+        for a, b in (("same_shape", "black"), ("same_shape_fit", "black"),
+                     ("smile_tree", "black"), ("same_shape_fit", "smile_tree")))
     bys = d.groupby("k")
-    res["by strike: variance left (Black / smile tree / same shape)"] = "; ".join(
+    res["by strike: variance left (Black / smile tree / same shape b = 1 / fitted b)"] = "; ".join(
         f"{k:+.0%}: " + " / ".join(f"{100 * (g[c] ** 2).mean() / (g['unhedged'] ** 2).mean():.1f}%"
                                    for c in meth) for k, g in bys)
-    res["average delta by strike (Black / smile tree / same shape)"] = "; ".join(
-        f"{k:+.0%}: {g['d_bs'].mean():.3f} / {g['d_lv'].mean():.3f} / {g['d_ss'].mean():.3f}"
-        for k, g in bys)
+    res["average delta by strike (Black / smile tree / same shape b = 1 / fitted b)"] = "; ".join(
+        f"{k:+.0%}: {g['d_bs'].mean():.3f} / {g['d_lv'].mean():.3f} / {g['d_ss'].mean():.3f} / "
+        f"{same_shape_delta(g, b_fit).mean():.3f}" for k, g in bys)
 
-    fig, ax = plt.subplots(figsize=(10, 4.7))
+    fig, ax = plt.subplots(figsize=(10, 5.0))
     groups = ["all days", "2015-2020", "2021-2026", "moves over 1%"]
     xs = np.arange(len(groups))
     cols = {"black": plots.MUTED, "smile_tree": plots.COLORS["Leisen-Reimer"],
-            "same_shape": plots.SERIES[1]}
+            "same_shape": plots.SERIES[3], "same_shape_fit": plots.SERIES[1]}
+    wd = 0.2
     for j, c in enumerate(meth):
         vals = [left[g][c] for g in groups]
-        ax.bar(xs + (j - 1) * 0.26, vals, 0.26, color=cols[c], label=meth[c])
-        for x, y in zip(xs + (j - 1) * 0.26, vals, strict=True):
+        ax.bar(xs + (j - 1.5) * wd, vals, wd, color=cols[c], label=meth[c])
+        for x, y in zip(xs + (j - 1.5) * wd, vals, strict=True):
             ax.text(x, y + 0.2, f"{y:.1f}", ha="center", va="bottom", fontsize=8.5,
                     color=plots.TEXT)
     ax.set_xticks(xs, groups)
     ax.set_ylabel("option's daily price variance\nleft after hedging, %")
-    ax.legend(fontsize=9, loc="upper center", bbox_to_anchor=(0.5, -0.1), ncol=3)
-    ax.set_title("The smile tree's delta was no better than Black's; keeping the smile's shape "
-                 "left the least risk", fontsize=12)
+    ax.legend(fontsize=8.5, loc="upper center", bbox_to_anchor=(0.5, -0.1), ncol=2)
+    ax.set_title("No delta beat Black's reliably out of sample; the smile tree's did worst there",
+                 fontsize=12)
     fig.tight_layout()
     plots.save(fig, out_dir, "hedging")
     plt.close(fig)

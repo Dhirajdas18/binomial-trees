@@ -31,3 +31,25 @@ def test_on_a_flat_smile_all_three_deltas_agree():
     assert len(out) == len(hedge.KS)
     assert np.allclose(out["d_ss"], out["d_bs"])
     assert np.allclose(out["d_lv"], out["d_bs"], atol=2e-3)
+
+
+def test_same_shape_delta_matches_a_finite_difference_of_the_rule_on_a_skewed_smile():
+    # rule: tomorrow's vol at log-moneyness k = today's at k + b S (dF/F), S the ATM slope
+    p = {"a": 0.001, "b": 0.02, "rho": -0.7, "m": 0.01, "sigma": 0.05}
+    F, T, r, b = 100.0, 0.08, 0.065, 1.0
+    S = hedge._slope(p, T)
+    for k in (-0.05, 0.0, 0.03):
+        K = F * math.exp(k)
+        kind = "put" if k < 0 else "call"
+        _, d_bs, vega = hedge.black(F, K, T, r, hedge._vol(p, F, K, T), kind)
+        row = pd.DataFrame({"d_bs": [d_bs], "vega": [vega], "S": [S],
+                            "sk": [hedge._dvol_dk(p, k, T)], "F0": [F]})
+        got = float(hedge.same_shape_delta(row, b).iloc[0])
+
+        def price(Fx, K=K, kind=kind):
+            vol = hedge._vol(p, Fx, K, T) + b * S * math.log(Fx / F)
+            return hedge.black(Fx, K, T, r, vol, kind)[0]
+
+        h = 1e-3
+        fd = (price(F + h) - price(F - h)) / (2 * h)
+        assert abs(got - fd) < 2e-4

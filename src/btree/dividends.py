@@ -118,6 +118,7 @@ def events(data: dict[str, pd.DataFrame], before: int = 30, after: int = 10,
             rows.append({"symbol": sym, "ex_date": ex, "start": t0, "S": float(c.loc[t0]),
                          "dividend": float(amt), "vol": float(past.std() * np.sqrt(252)),
                          "T": T, "divs": divs})
-    out = pd.DataFrame(rows)
+    cols = ["symbol", "ex_date", "start", "S", "dividend", "vol", "T", "divs"]
+    out = pd.DataFrame(rows, columns=cols)
     out["div_yield"] = out["dividend"] / out["S"]
     return out

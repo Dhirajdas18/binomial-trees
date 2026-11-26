@@ -6,11 +6,13 @@ above). The "market" price is Black-76 at the slice's SVI volatility at the stri
 same strike and expiry are re-priced from tomorrow's slice. The hedge holds delta units of the
 expiry's forward (futures), so the hedging error is dC - delta dF. Deltas:
 - Black: Black-76 delta at the strike's own volatility (vols stay with the strike);
-- smile tree: re-price the local-volatility tree of `iv.localvol` with the forward moved +-0.5%,
+- smile tree: re-price the local-volatility tree of `btree.localvol` with the forward moved +-0.5%,
   local volatility held fixed as a function of the price level;
-- same shape: Black delta + vega x B x S / F, with S the slice's at-the-money slope d(vol)/dk and B
-  the multiplier chosen on 2015-2020 in implied-vol-surface finding 4 (1.0): the smile keeps its
-  shape against the forward and its level moves by B x S x (dF / F).
+- same shape (implied-vol-surface finding 4's rule): tomorrow's vol at log-moneyness k is today's
+  at k plus b x S x (dF / F), S the at-the-money slope d(vol)/dk. A fixed strike's k moves by
+  -dF/F, so its vol changes by (b S - sigma'(k)) dF/F, and the delta is Black's plus
+  vega x (b S - sigma'(k)) / F, sigma'(k) the smile's slope at the strike. b = 1 is that repo's
+  choice on 2015-2020; `same_shape_delta` gives any b from the stored pieces.
 """
 
 import math
@@ -43,6 +45,19 @@ def _vol(p, F, K, T):
     a, b, rho, m, s = (p[x] for x in localvol.PARAMS)
     w = a + b * (rho * (k - m) + math.sqrt((k - m) ** 2 + s * s))
     return math.sqrt(max(w, 1e-12) / T)
+
+
+def _dvol_dk(p, k, T):
+    """Slope of the SVI smile, d(vol)/dk, at log-moneyness k."""
+    a, b, rho, m, s = (p[x] for x in localvol.PARAMS)
+    root = math.sqrt((k - m) ** 2 + s * s)
+    w = a + b * (rho * (k - m) + root)
+    return b * (rho + (k - m) / root) / (2 * math.sqrt(max(w, 1e-12) * T))
+
+
+def same_shape_delta(d, b):
+    """Same-shape delta for multiplier b from a `day_cases` table."""
+    return d["d_bs"] + d["vega"] * (b * d["S"] - d["sk"]) / d["F0"]
 
 
 def _slope(p, T):
@@ -91,9 +106,11 @@ def day_cases(svi: pd.DataFrame, r: float, steps_per_day: int = 42, every: int =
                                                                  cap=cap))
                 for h in (H, -H))
             d_lv = (up - dn) / (2 * H * F0)
-            d_ss = d_bs + vega * B_SAME_SHAPE * S / F0
+            sk = _dvol_dk(p0, k, T0)
+            d_ss = d_bs + vega * (B_SAME_SHAPE * S - sk) / F0
             dC, dF = c1 - c0, F1 - F0
             rows.append({"date": t1, "k": k, "dC": dC, "dF": dF, "F0": F0, "unhedged": dC,
                          "black": dC - d_bs * dF, "smile_tree": dC - d_lv * dF,
-                         "same_shape": dC - d_ss * dF, "d_bs": d_bs, "d_lv": d_lv, "d_ss": d_ss})
+                         "same_shape": dC - d_ss * dF, "d_bs": d_bs, "d_lv": d_lv, "d_ss": d_ss,
+                         "vega": vega, "S": S, "sk": sk})
     return pd.DataFrame(rows)
