@@ -20,7 +20,7 @@ to Black-Scholes as the steps grow; all computed in the browser.
 - [x] Discrete cash dividends on NSE stocks
 - [x] Trinomial trees and barrier options
 - [x] An implied tree fitted to the NIFTY smile
-- [ ] Does a smile-fitted tree hedge better than Black-Scholes
+- [x] Does a smile-fitted tree hedge better than Black-Scholes
 
 ## Findings
 
@@ -174,13 +174,38 @@ compared with the same tree at a flat at-the-money volatility.
   volatility 5% below the forward was a median 1.55 times that at the forward (above it in 98% of
   month-ends), so the price reaches the barrier more often.
 
+### 7. The smile tree's delta hedged no better than Black's; keeping the smile's shape left the least risk
+
+<a href="docs/img/hedging.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/hedging.png"><img src="docs/img/hedging.gif" alt="Share of the option's daily price variance left after hedging with Black's delta, the smile tree's delta and the same-shape delta, for all days, each half and big-move days" width="720"></picture></a>
+
+Every trading day from January 2015 to November 2026 (2,926 day pairs), options on the monthly
+expiry 20–60 days out are struck 5% below, at and 3% above the forward and hedged for one day with
+the expiry's futures; the hedging error is the option's price change minus delta times the
+forward's change, both days priced at their own SVI smile. Three deltas: Black's at the strike's own
+volatility (the smile stays with the strike); the smile tree's, from re-pricing finding 6's
+local-volatility tree with the forward moved ±0.5% (local volatility fixed to the price level); and
+the same-shape rule from implied-vol-surface's finding 4 (the smile keeps its shape against the
+forward and its level moves by 1 × the at-the-money slope × the move, the multiplier chosen there on
+2015–2020). Scored by the share of the option's daily price variance left after hedging.
+
+- **The smile tree was not reliably better than Black.** It left 12.6% of the variance against
+  Black's 13.1% (daily mean squared error −3.9%, Newey-West t −0.4): better in 2015–2020 (11.6%
+  against 14.3%), worse in 2021–2026 (13.1% against 12.5%).
+- **Keeping the smile's shape left the least risk, but not decisively against Black.** The same-shape
+  delta left 11.3% overall and 11.4% in 2021–2026, after its multiplier was chosen on 2015–2020;
+  against Black that is −14.2% (t −1.6), −9.4% on 2021–2026 alone (t −1.2). Against the smile tree it
+  was clearly better: −10.7% (t −5.8), −13.1% on 2021–2026 (t −5.6).
+- **The smile tree overcorrected.** Its at-the-money delta averaged 0.455 against Black's 0.506; the
+  same-shape rule, 0.459. Below the forward the smile tree made puts most negative (−0.213 against
+  −0.156), and that strike was its worst: 21.6% of the variance left against Black's 18.8%.
+
 ## Quick start
 
 ```bash
 uv sync
 uv run btree report <topic>             # a study's numbers and charts -> out/
                                         # (topics: convergence, greeks, american, dividends,
-                                        #  barriers, smile-tree)
+                                        #  barriers, smile-tree, hedging)
 uv run python scripts/build_site.py     # tree lab -> site/index.html (code only, no data)
 uv run pytest
 ```
@@ -214,6 +239,8 @@ the NSE bhavcopy archive (`BTREE_LAKE_DIR` or `IV_LAKE_DIR`); nothing from NSE i
 - `src/btree/localvol.py`: the SVI surface interpolated in time, Dupire's local variance in
   total-variance form, a forward-units trinomial grid with node-by-node probabilities, a barrier
   check and a cell-averaged digital payoff.
+- `src/btree/hedge.py`: one-day hedging errors of NIFTY options with Black's delta, the smile tree's
+  delta and the same-shape rule's delta.
 - `src/btree/data.py`: month-end NIFTY option cases from implied-vol-surface's local data.
 - `src/btree/reports.py`: README findings, reproducible with `btree report <topic>`.
 - `src/btree/site.py`: the tree lab, one static Plotly page built from code alone.

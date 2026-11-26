@@ -643,6 +643,92 @@ def report_smile_tree(out_dir: Path) -> dict:
     return res
 
 
+def _nw_t(x, lags=5):
+    x = np.asarray(x, float)
+    m = x.mean()
+    e = x - m
+    v = e @ e / len(e)
+    for lag in range(1, lags + 1):
+        v += 2 * (1 - lag / (lags + 1)) * (e[lag:] @ e[:-lag]) / len(e)
+    return m / np.sqrt(v / len(e))
+
+
+def report_hedging(out_dir: Path) -> dict:
+    """Does a smile-fitted tree hedge better? Every trading day 2015-2026, options on the monthly
+    expiry 20-60 days out, struck 5% below, at and 3% above the forward, hedged for one day with
+    futures using Black's delta, the smile tree's delta, or the same-shape rule's delta
+    (implied-vol-surface finding 4, multiplier chosen on 2015-2020). Scored by the hedging error
+    dC - delta dF. Needs BTREE_IV_DIR."""
+    import pandas as pd
+
+    from btree.data import R, iv_dir
+    from btree.hedge import B_SAME_SHAPE, day_cases
+
+    res = {}
+    svi = pd.read_parquet(iv_dir() / "data" / "derived" / "svi_daily.parquet")
+    d = day_cases(svi, R)
+    d["big"] = (d["dF"] / d["F0"]).abs() > 0.01
+    meth = {"black": "Black delta", "smile_tree": "smile-tree delta",
+            "same_shape": f"same-shape delta ({B_SAME_SHAPE:g}x)"}
+    res["cases"] = (
+        f"{len(d):,} option-days on {d['date'].nunique():,} day pairs "
+        f"({d['date'].min():%b %Y}-{d['date'].max():%b %Y}); strikes "
+        f"{', '.join(f'{k:+.0%}' for k in sorted(d['k'].unique()))} of the forward; "
+        f"{int(d.loc[d['k'] == 0, 'big'].sum())} day pairs with a forward move over 1%"
+    )
+    left = {}
+    for label, m in (("all days", d["date"] == d["date"]), ("2015-2020", d["date"].dt.year <= 2020),
+                     ("2021-2026", d["date"].dt.year >= 2021), ("moves over 1%", d["big"])):
+        x = d[m]
+        base = (x["unhedged"] ** 2).mean()
+        left[label] = {c: 100 * (x[c] ** 2).mean() / base for c in meth}
+        res[f"share of the option's daily variance left after hedging, {label} ({len(x):,})"] = (
+            "; ".join(f"{meth[c]} {left[label][c]:.1f}%" for c in meth))
+    daily = d.groupby("date")[list(meth)].apply(lambda g: (g**2).mean())
+    for c in ("smile_tree", "same_shape"):
+        diff = daily[c] - daily["black"]
+        res[f"  {meth[c]} against Black (daily mean squared error)"] = (
+            f"{100 * diff.mean() / daily['black'].mean():+.1f}% (Newey-West t {_nw_t(diff):.1f}); "
+            f"better on {(diff < 0).mean():.0%} of days"
+        )
+    diff = daily["same_shape"] - daily["smile_tree"]
+    res["  same-shape against smile tree"] = (
+        f"{100 * diff.mean() / daily['smile_tree'].mean():+.1f}% (t {_nw_t(diff):.1f})")
+    test = daily[daily.index.year >= 2021]
+    res["  2021-2026 only (the same-shape multiplier was chosen on 2015-2020)"] = "; ".join(
+        f"{meth[a]} against {meth[b]}: {100 * (test[a] - test[b]).mean() / test[b].mean():+.1f}% "
+        f"(t {_nw_t(test[a] - test[b]):.1f})"
+        for a, b in (("same_shape", "black"), ("smile_tree", "black"),
+                     ("same_shape", "smile_tree")))
+    bys = d.groupby("k")
+    res["by strike: variance left (Black / smile tree / same shape)"] = "; ".join(
+        f"{k:+.0%}: " + " / ".join(f"{100 * (g[c] ** 2).mean() / (g['unhedged'] ** 2).mean():.1f}%"
+                                   for c in meth) for k, g in bys)
+    res["average delta by strike (Black / smile tree / same shape)"] = "; ".join(
+        f"{k:+.0%}: {g['d_bs'].mean():.3f} / {g['d_lv'].mean():.3f} / {g['d_ss'].mean():.3f}"
+        for k, g in bys)
+
+    fig, ax = plt.subplots(figsize=(10, 4.7))
+    groups = ["all days", "2015-2020", "2021-2026", "moves over 1%"]
+    xs = np.arange(len(groups))
+    cols = {"black": plots.MUTED, "smile_tree": plots.COLORS["Leisen-Reimer"],
+            "same_shape": plots.SERIES[1]}
+    for j, c in enumerate(meth):
+        vals = [left[g][c] for g in groups]
+        ax.bar(xs + (j - 1) * 0.26, vals, 0.26, color=cols[c], label=meth[c])
+        for x, y in zip(xs + (j - 1) * 0.26, vals, strict=True):
+            ax.text(x, y + 0.2, f"{y:.1f}", ha="center", va="bottom", fontsize=8.5,
+                    color=plots.TEXT)
+    ax.set_xticks(xs, groups)
+    ax.set_ylabel("option's daily price variance\nleft after hedging, %")
+    ax.legend(fontsize=9, loc="upper center", bbox_to_anchor=(0.5, -0.1), ncol=3)
+    ax.set_title("The smile tree's delta was no better than Black's; keeping the smile's shape "
+                 "left the least risk", fontsize=12)
+    fig.tight_layout()
+    plots.save(fig, out_dir, "hedging")
+    plt.close(fig)
+    return res
+
 REPORTS: dict[str, Callable[[Path], dict]] = {
     "convergence": report_convergence,
     "greeks": report_greeks,
@@ -650,4 +736,5 @@ REPORTS: dict[str, Callable[[Path], dict]] = {
     "dividends": report_dividends,
     "barriers": report_barriers,
     "smile-tree": report_smile_tree,
+    "hedging": report_hedging,
 }
