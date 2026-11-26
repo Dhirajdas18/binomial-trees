@@ -96,7 +96,7 @@ $js
     stats([
       [`Tree price, ${o.n} step${o.n > 1 ? "s" : ""}`, rs(price)],
       [am ? "Black-Scholes (European)" : "Black-Scholes", rs(bs)],
-      ["Difference", rs(price - bs)],
+      [am ? "Difference <small>(tree error plus the early-exercise premium)</small>" : "Difference <small>(tree error)</small>", rs(price - bs)],
       ["Early-exercise premium <small>(200 steps)</small>", rs(prem)],
       ["Delta <small>(₹ per ₹1 share move)</small>", num(gk.delta, 3)],
       ["Gamma <small>(delta change per ₹100)</small>", num(100 * gk.gamma, 4)],
