@@ -420,9 +420,100 @@ def report_dividends(out_dir: Path) -> dict:
     return res
 
 
+def report_barriers(out_dir: Path) -> dict:
+    """Barrier options: a 91-day down-and-out NIFTY call (strike at today's level, barrier 5%
+    below, 15% volatility, 6.5% rate, 1.3% yield) on a CRR tree and on a trinomial tree with a node
+    row on the barrier, against the continuous-barrier formula; then a 30-day down-and-out call
+    checked once a trading day, at each month-end's real 30-day at-the-money NIFTY volatility,
+    against the continuous formula and the Broadie-Glasserman-Kou correction. Needs
+    BTREE_IV_DIR (volatilities)."""
+    import pandas as pd
+
+    from btree import barrier
+    from btree.data import R, iv_dir
+
+    res = {}
+    S, K, H, T, v = 25000.0, 25000.0, 23750.0, 91 / 365, 0.15
+    exact = barrier.dao_closed(S, K, H, T, R, NIFTY_YIELD, v)
+    ns = np.arange(20, 801, 4)
+    crr = np.array([barrier.dao_crr(S, K, H, T, R, NIFTY_YIELD, v, n) for n in ns]) - exact
+    tri = np.array([barrier.dao_trinomial(S, K, H, T, R, NIFTY_YIELD, v, n) for n in ns]) - exact
+    res["91-day down-and-out call, barrier 5% below"] = f"continuous formula Rs {exact:.2f}"
+    for n in (100, 200, 400, 800):
+        i = int(np.argmin(np.abs(ns - n)))
+        res[f"  {ns[i]} steps"] = f"CRR error Rs {crr[i]:+.2f}, aligned trinomial Rs {tri[i]:+.3f}"
+    big = ns >= 400
+    res["  from 400 to 800 steps"] = (
+        f"CRR error ranged Rs {crr[big].min():+.2f} to {crr[big].max():+.2f}; aligned trinomial "
+        f"Rs {tri[big].min():+.3f} to {tri[big].max():+.3f}; trinomial within a tick from "
+        f"{ns[np.argmax(np.abs(tri) <= TICK)]} steps"
+    )
+
+    svi = pd.read_parquet(iv_dir() / "data" / "derived" / "svi_daily.parquet")
+    svi = svi[svi["converged"] & svi["days"].between(20, 45)]
+    dates = pd.DatetimeIndex(sorted(svi["date"].unique()))
+    ends = pd.Series(dates, index=dates).groupby([dates.year, dates.month]).max()
+    m = svi[svi["date"].isin(ends)].assign(gap=lambda x: (x["days"] - 30).abs())
+    vols = m.sort_values("gap").groupby("date").head(1)["atm_vol"].to_numpy()
+    T30, checks, per = 30 / 365, 21, 10  # 21 trading-day closes in 30 calendar days
+    rows = []
+    for H_pct in (0.95, 0.90):
+        for vol in vols:
+            Hb = 100 * H_pct
+            daily = barrier.dao_trinomial(100, 100, Hb, T30, R, NIFTY_YIELD, vol, checks * per,
+                                          monitor=per)
+            cont = barrier.dao_closed(100, 100, Hb, T30, R, NIFTY_YIELD, vol)
+            bgk = barrier.dao_closed(100, 100, barrier.bgk_barrier(Hb, vol, T30 / checks), T30, R,
+                                     NIFTY_YIELD, vol)
+            rows.append({"H": H_pct, "vol": vol, "daily": daily, "cont": cont, "bgk": bgk})
+    d = pd.DataFrame(rows)
+    d["cont_err"] = 100 * (d["cont"] / d["daily"] - 1)
+    d["bgk_err"] = 100 * (d["bgk"] / d["daily"] - 1)
+    for H_pct, g in d.groupby("H"):
+        key = f"30-day down-and-out call, barrier {1 - H_pct:.0%} below, checked on 21 closes"
+        res[key] = (
+            f"{len(g)} month-end volatilities ({g['vol'].min():.1%}-{g['vol'].max():.1%}); the "
+            f"continuous formula against the daily price: median {g['cont_err'].median():+.1f}% "
+            f"(range {g['cont_err'].min():+.1f}% to {g['cont_err'].max():+.1f}%); with the "
+            f"Broadie-Glasserman-Kou shift: median {g['bgk_err'].median():+.2f}% (largest "
+            f"{g['bgk_err'].abs().max():.2f}%)"
+        )
+
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.3))
+    ax = axes[0]
+    ax.plot(ns, crr, color=plots.COLORS["CRR"], lw=1.4, label="binomial tree (CRR)")
+    ax.plot(ns, tri, color=plots.COLORS["Leisen-Reimer"], lw=2,
+            label="trinomial, nodes on the barrier")
+    ax.axhline(0, color=plots.TEXT_2, lw=0.8)
+    ax.set_xlabel("steps in the tree")
+    ax.set_ylabel("tree price minus the formula, Rs")
+    ax.set_title(f"91-day down-and-out call, barrier 5% below (worth Rs {exact:,.0f})",
+                 fontsize=10.5)
+    ax.legend(fontsize=9, loc="upper right")
+    ax = axes[1]
+    for H_pct, col in ((0.95, plots.SERIES[1]), (0.90, plots.BLUE_RAMP[5])):
+        g = d[d["H"] == H_pct].sort_values("vol")
+        ax.plot(100 * g["vol"], g["cont_err"], color=col, lw=2)
+        ax.plot(100 * g["vol"], g["bgk_err"], color=col, lw=1.4, ls="--")
+        plots.label_line_end(ax, 100 * g["vol"].iloc[-1], g["cont_err"].iloc[-1],
+                             f"barrier {1 - H_pct:.0%} below", col)
+    ax.axhline(0, color=plots.TEXT_2, lw=0.8)
+    ax.set_xlabel("NIFTY's 30-day at-the-money volatility at a month-end, %")
+    ax.set_ylabel("continuous formula against the price\nchecked on daily closes, %")
+    ax.set_title("Solid: continuous formula; dashed: with the daily-check shift", fontsize=10.5)
+    fig.suptitle("A binomial tree saws around a barrier price; checking once a day changes the "
+                 "price, and a small shift fixes the formula", x=0.01, ha="left", fontsize=11.5,
+                 fontweight="semibold")
+    fig.tight_layout()
+    plots.save(fig, out_dir, "barriers")
+    plt.close(fig)
+    return res
+
+
 REPORTS: dict[str, Callable[[Path], dict]] = {
     "convergence": report_convergence,
     "greeks": report_greeks,
     "american": report_american,
     "dividends": report_dividends,
+    "barriers": report_barriers,
 }

@@ -18,7 +18,7 @@ to Black-Scholes as the steps grow; all computed in the browser.
 - [x] Greeks from the tree
 - [x] American options: the early-exercise premium and boundary
 - [x] Discrete cash dividends on NSE stocks
-- [ ] Trinomial trees and barrier options
+- [x] Trinomial trees and barrier options
 - [ ] An implied tree fitted to the NIFTY smile
 - [ ] Does a smile-fitted tree hedge better than Black-Scholes
 
@@ -121,12 +121,38 @@ this is a what-if.
   median 2.4% (10% in the money; 1.9% at the money), 7.1% and 15.2% for dividends of 2–5%, and
   34.7% at the money above 5%.
 
+### 5. A binomial tree saws around a barrier price; a trinomial tree with nodes on the barrier doesn't
+
+<a href="docs/img/barriers.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/barriers.png"><img src="docs/img/barriers.gif" alt="Tree price minus the formula for a down-and-out call against steps, binomial and aligned trinomial; and the continuous formula's error against a daily-checked price by NIFTY volatility, with and without the Broadie-Glasserman-Kou shift" width="720"></picture></a>
+
+A down-and-out call is a call that dies if the price touches a barrier below today's level. NSE
+lists no barrier options, so this is calculation on NIFTY-like terms: strike at today's level,
+barrier 5% below, 91 days, 15% volatility, 6.5% rate, 1.3% yield, against the continuous-barrier
+formula. The binomial tree kills every node at or below the barrier; Ritchken's trinomial tree (up,
+middle or down at each step) stretches its spacing so a row of nodes sits exactly on the barrier.
+Then the same option over 30 days, checked only on 21 daily closes (a trinomial tree that checks the
+barrier every tenth of its 210 steps), at each of 143 month-ends' real 30-day at-the-money NIFTY
+volatility (8.4%–62.0%), against the continuous formula and the formula with Broadie, Glasserman
+and Kou's shift of the barrier (×e^{−0.5826σ√Δt}).
+
+- **The binomial tree never settled.** Against a formula price of ₹828.53 its error was +₹4.80 at
+  100 steps and +₹7.76 at 800, and swung between −₹0.06 and +₹15.65 from 400 to 800 steps: the
+  barrier usually falls between node levels, and which level the tree treats as the barrier moves
+  with the step count.
+- **The aligned trinomial converged.** Its error was +₹0.27 at 100 steps, +₹0.06 at 800, and within
+  a tick from 480 steps.
+- **Checking once a day mattered when NIFTY was volatile.** With the barrier 5% below, the
+  continuous formula priced the daily-checked option a median 0.2% too low, but up to 16.8% too low
+  at 62% volatility (10% below: up to 5.0%). The shifted barrier cut the median gap to 0.04%; at the
+  highest volatilities it overshot, by up to 5.8%.
+
 ## Quick start
 
 ```bash
 uv sync
 uv run btree report <topic>             # a study's numbers and charts -> out/
-                                        # (topics: convergence, greeks, american, dividends)
+                                        # (topics: convergence, greeks, american, dividends,
+                                        #  barriers)
 uv run python scripts/build_site.py     # tree lab -> site/index.html (code only, no data)
 uv run pytest
 ```
@@ -154,6 +180,9 @@ the NSE bhavcopy archive (`BTREE_LAKE_DIR` or `IV_LAKE_DIR`); nothing from NSE i
 - `src/btree/dividends.py`: Yahoo's close and cash dividends for NSE stocks (no threads, retried,
   cached under `data/`), the escrowed-dividend tree with exercise at every node, the continuous-yield
   shortcut, and the dividend events.
+- `src/btree/barrier.py`: down-and-out calls: the continuous-barrier formula, the binomial tree,
+  Ritchken's trinomial tree with a node row on the barrier and an optional checking interval, and
+  the Broadie-Glasserman-Kou barrier shift.
 - `src/btree/data.py`: month-end NIFTY option cases from implied-vol-surface's local data.
 - `src/btree/reports.py`: README findings, reproducible with `btree report <topic>`.
 - `src/btree/site.py`: the tree lab, one static Plotly page built from code alone.
