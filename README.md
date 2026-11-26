@@ -15,7 +15,7 @@ to Black-Scholes as the steps grow; all computed in the browser.
 ## Features
 
 - [x] One step to many: replication, risk-neutral probability, CRR and its convergence to Black-Scholes
-- [ ] Greeks from the tree
+- [x] Greeks from the tree
 - [ ] American options: the early-exercise premium and boundary
 - [ ] Discrete cash dividends on NSE stocks
 - [ ] Trinomial trees and barrier options
@@ -53,12 +53,34 @@ is the exact answer. Accuracy is counted against NSE's price step, one tick of �
   average halved the median error within 2% of the forward (₹0.37 to ₹0.19) and did nothing
   beyond 10% (₹0.10 to ₹0.11); it needed 1,000 steps for 96.4% within a tick.
 
+### 2. Greeks read off a basic tree were accurate; Leisen-Reimer's own nodes gave a wrong theta
+
+<a href="docs/img/greeks.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/greeks.png"><img src="docs/img/greeks.gif" alt="Median error of delta, gamma and theta against the formula for five ways of getting Greeks from a tree" width="720"></picture></a>
+
+A tree gives Greeks for free from its first two steps: delta from the two prices one step ahead,
+gamma from the three two steps ahead, theta from the middle two-step price against today's. Each
+way is scored against the Black-Scholes (Black-76) formulas on finding 1's 37,652 NIFTY options:
+basic CRR trees of 100 and 500 steps, a 101-step Leisen-Reimer tree read the same way, the same with
+its theta moved back to today's price (a second-order Taylor step), and the Leisen-Reimer price
+recomputed with NIFTY moved ±0.5% and one day later.
+
+- **The basic tree's own Greeks were accurate.** At 100 steps the median errors were 0.028 delta
+  points, 0.41% of gamma and 0.41% of theta (₹0.011 a day); at 500 steps 0.005 points, 0.08% and
+  0.08%.
+- **Leisen-Reimer's nodes gave a theta off by 142%.** Its middle two-step node is not at today's
+  price (its up and down moves don't cancel), so comparing the two prices mixes a price move into
+  the time decay. Moving it back to today's price cut the error to 0.72%. Its delta (0.080 points)
+  and gamma (2.0%) read off the nodes were also worse than the basic tree's, and the Taylor step did
+  not fix delta.
+- **Re-pricing Leisen-Reimer worked.** Recomputing its price with NIFTY moved and a day later gave
+  0.024 delta points, 0.09% of gamma and 0.85% of theta.
+
 ## Quick start
 
 ```bash
 uv sync
 uv run btree report <topic>             # a study's numbers and charts -> out/
-                                        # (topics: convergence)
+                                        # (topics: convergence, greeks)
 uv run python scripts/build_site.py     # tree lab -> site/index.html (code only, no data)
 uv run pytest
 ```
@@ -80,7 +102,9 @@ committed here.
 - `src/btree/tree.js`: the lab's browser copy of the tree, Black-Scholes (with a double-precision
   normal CDF) and Leisen-Reimer, tested against Python through Node to 1e-9.
 - `src/btree/batch.py`: European tree prices for many options at once as the discounted binomial
-  average of payoffs (equal to backward induction, tested), for CRR and Leisen-Reimer.
+  average of payoffs (equal to backward induction, tested), for CRR and Leisen-Reimer; Greeks from
+  the first two steps (with an optional move back to today's price) or by re-pricing, and the
+  Black-Scholes Greeks.
 - `src/btree/data.py`: month-end NIFTY option cases from implied-vol-surface's local data.
 - `src/btree/reports.py`: README findings, reproducible with `btree report <topic>`.
 - `src/btree/site.py`: the tree lab, one static Plotly page built from code alone.

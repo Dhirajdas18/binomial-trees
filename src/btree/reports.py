@@ -151,6 +151,84 @@ def report_convergence(out_dir: Path) -> dict:
     return res
 
 
+def _greeks_all(q, fn, *args, **kw):
+    """Delta, gamma, theta for every quote (on the forward), with a batch Greek function."""
+    from btree.data import R
+
+    out = [np.empty(len(q)) for _ in range(3)]
+    for kind in ("call", "put"):
+        idx = np.flatnonzero((q["kind"] == kind).to_numpy())
+        for c in np.array_split(idx, max(1, len(idx) // 1500)):
+            a = (q["F"].to_numpy()[c], q["strike"].to_numpy()[c], q["T"].to_numpy()[c], R, R,
+                 q["vol"].to_numpy()[c])
+            for o, v in zip(out, fn(*a, *args, kind=kind, **kw), strict=True):
+                o[c] = v
+    return out
+
+
+def report_greeks(out_dir: Path) -> dict:
+    """Greeks from the tree against the Black-Scholes (Black-76) formulas on the real NIFTY
+    options of finding 1: delta, gamma and theta read off the first two steps of CRR and
+    Leisen-Reimer trees, Leisen-Reimer's theta moved back to today's price, and Leisen-Reimer
+    re-priced with the price moved +-0.5% and one day later."""
+    from btree import batch
+    from btree.data import month_end_quotes
+
+    res = {}
+    q = month_end_quotes()
+    bd, bg, bt = _greeks_all(q, batch.bs_greeks)
+    methods = {
+        "basic tree, 100 steps": (batch.node_greeks, (100,), {"method": "crr"}),
+        "basic tree, 500 steps": (batch.node_greeks, (500,), {"method": "crr"}),
+        "Leisen-Reimer nodes, 101 steps": (batch.node_greeks, (101,), {"method": "lr"}),
+        "Leisen-Reimer nodes, theta moved to today": (batch.node_greeks, (101,),
+                                                      {"method": "lr", "correct": True}),
+        "Leisen-Reimer re-priced (101 steps)": (batch.bump_greeks, (101,), {}),
+    }
+    res["options"] = f"{len(q):,} (finding 1's month-end NIFTY options)"
+    med = {}
+    for name, (fn, args, kw) in methods.items():
+        d, g, t = _greeks_all(q, fn, *args, **kw)
+        de = 100 * np.abs(d - bd)
+        ge = 100 * np.abs(g / bg - 1)
+        te = 100 * np.abs(t / bt - 1)
+        med[name] = (np.median(de), np.median(ge), np.median(te))
+        res[f"  {name}"] = (
+            f"delta error median {np.median(de):.4f} points (99th percentile "
+            f"{np.quantile(de, 0.99):.3f}); gamma error median {np.median(ge):.2f}% (within 1%: "
+            f"{(ge < 1).mean():.0%}); theta error median {np.median(te):.2f}% "
+            f"(Rs {np.median(np.abs(t - bt)) / 365:.4f} a day)"
+        )
+
+    fig, axes = plt.subplots(1, 3, figsize=(11.5, 4.4))
+    names = list(methods)
+    short = ["basic\n100", "basic\n500", "LR\nnodes", "LR nodes\ntheta\nfixed",
+             "LR\nre-priced"]
+    cols = [plots.COLORS["CRR"], plots.BLUE_RAMP[5], plots.COLORS["Leisen-Reimer"],
+            plots.SERIES[4], plots.SERIES[3]]  # green means "averaged" elsewhere
+    titles = ("delta, error in points", "gamma, error in %", "theta, error in %")
+    for j, ax in enumerate(axes):
+        vals = [med[nm][j] for nm in names]
+        ax.bar(range(len(names)), vals, color=cols)
+        ax.set_yscale("log")
+        for x, y in enumerate(vals):
+            ax.text(x, y * 1.15, f"{y:.3g}", ha="center", va="bottom", fontsize=8.5,
+                    color=plots.TEXT)
+        ax.set_xticks(range(len(names)), short, fontsize=8.5)
+        ax.set_title(titles[j], fontsize=10.5)
+        ax.set_ylim(min(vals) / 3, max(vals) * 4)
+        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:g}"))
+        ax.yaxis.set_minor_formatter(plt.NullFormatter())
+    axes[0].set_ylabel("median error against the formula\n(log scale; 37,652 NIFTY options)")
+    fig.suptitle("Read Greeks off a basic tree or re-price; Leisen-Reimer's own nodes give a "
+                 "wrong theta", x=0.01, ha="left", fontsize=12.5, fontweight="semibold")
+    fig.tight_layout()
+    plots.save(fig, out_dir, "greeks")
+    plt.close(fig)
+    return res
+
+
 REPORTS: dict[str, Callable[[Path], dict]] = {
     "convergence": report_convergence,
+    "greeks": report_greeks,
 }
