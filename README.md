@@ -44,7 +44,7 @@ is the exact answer. Accuracy is counted against NSE's price step, one tick of �
   at 25 steps and all of them at 51 (largest error ₹0.03); at 101 steps its median error was
   ₹0.0008.
 - **The basic tree needed thousands.** CRR priced 17.2% within a tick at 100 steps, 60.6% at 500
-  and 95.9% at 2,000. Its error halved each time the steps doubled; Leisen-Reimer's fell by about a
+  and 95.9% at 2,000. Its error halved each time the steps doubled; Leisen-Reimer's fell to about a
   quarter.
 - **Averaging fixed the at-the-money zig-zag, not the rest.** At the money CRR's error flips sign
   between odd and even steps (−1.07 at 100 steps for a 30-day call worth ₹427), and the average
