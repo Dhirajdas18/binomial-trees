@@ -111,7 +111,7 @@
 to expiry into steps; at each step the share price moves up or down by a set amount. Working back
 from expiry gives today’s option price, and with enough steps it lands on Black-Scholes. Change the
 inputs to see the tree, where exercising early pays, and how fast the price settles.</p>
-<p class="meta"><a href="$repo">Code and findings on GitHub</a></p>
+<p class="meta"><span>Updated $updated</span><a href="$repo">Code and findings on GitHub</a></p>
 </header>
 </div>
 <nav aria-label="Sections"><ul>
@@ -121,8 +121,11 @@ $nav
 $sections
 </main>
 <footer class="wrap">
-<p>Everything on this page is computed in your browser from the inputs above; no market data is
-loaded. The default inputs are a NIFTY-like example, not live prices.</p>
+<p>The tree lab runs entirely in your browser from the inputs above; its default inputs are a
+NIFTY-like example, not live prices. The findings in the repository use real data: NSE’s daily
+F&amp;O bhavcopy (NIFTY option closing prices and the SVI fits from implied-vol-surface), NIFTY’s
+close from the NSE bhavcopy archive and cash dividends from Yahoo Finance; the page carries no market
+data. Rebuilt whenever the code changes.</p>
 <p>Research only, not investment advice.</p>
 </footer>
 <script>
