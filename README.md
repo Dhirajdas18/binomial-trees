@@ -257,6 +257,9 @@ the NSE bhavcopy archive (`BTREE_LAKE_DIR` or `IV_LAKE_DIR`); nothing from NSE i
 - `src/btree/plots.py`: the shared chart style and the animated README charts.
 - Conventions: time to expiry is calendar days / 365; rates and dividend yields are continuously
   compounded, a year; prices in rupees; node j at step i has j up moves.
+- Data: NSE's daily F&O bhavcopy through implied-vol-surface's local data (NIFTY option closing
+  prices, forwards and SVI fits), NIFTY's close from the NSE bhavcopy archive, and cash dividends from
+  Yahoo Finance (cached under `data/`); read locally, never committed. The page needs no data.
 - Charts: one validated palette; README charts are animated GIFs with a static fallback for
   reduced-motion users.
 
